@@ -59,6 +59,7 @@ import {BufferedBounds} from './buffered_bounds';
 import {CHUNKED_TASK_BACKGROUND_PRIORITY} from './feature_flags';
 import {SliceTrackDetailsPanel} from './slice_track_details_panel';
 import {renderDoFrameTag} from '../../lynx_perf/frame/render_doframe_mark';
+import {trackContainFrameTag} from '../../lynx_perf/frame/frame_tag_track';
 import {isMainThreadTrack} from '../../lynx_perf/track_utils';
 import {
   RECT_PATTERN_FADE_RIGHT,
@@ -423,12 +424,13 @@ export class SliceTrack<T extends RowSchema> implements TrackRenderer {
       offset: baseOffsetPx,
     };
 
-    if (this.isMainThreadTrack()) {
+    if (this.isFrameTrack()) {
       renderDoFrameTag(
         ctx,
         timescale,
         this.sliceLayout.padding / 2 + FRAME_TAG_RADIUS,
         FRAME_TAG_RADIUS,
+        this.uri,
       );
     }
 
@@ -1185,12 +1187,12 @@ export class SliceTrack<T extends RowSchema> implements TrackRenderer {
     };
   }
 
-  private isMainThreadTrack(): boolean {
-    return isMainThreadTrack(this.uri);
+  private isFrameTrack(): boolean {
+    return isMainThreadTrack(this.uri) && trackContainFrameTag(this.uri);
   }
 
   private getFrameLayoutHeight(): number {
-    return this.isMainThreadTrack() ? FRAME_TAG_RADIUS * 2 : 0;
+    return this.isFrameTrack() ? FRAME_TAG_RADIUS * 2 : 0;
   }
 
   private updateSliceAndTrackHeight() {
