@@ -98,4 +98,5 @@ export const defaultPlugins = [
   'org.kernel.SuspendResumeLatency',
   'org.kernel.Wattson',
   'lynx.ThreadGroup',
+  'lynx.RouterArgs',
 ];

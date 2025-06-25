@@ -56,6 +56,7 @@ import {HighPrecisionTimeSpan} from '../base/high_precision_time_span';
 import {sha1} from '../base/hash';
 import {showModal} from '../widgets/modal';
 import m from 'mithril';
+import {KEEP_TRACE_URL_ON_ROUTE_ARGS} from '../lynx_features_flags';
 
 const ENABLE_CHROME_RELIABLE_RANGE_ZOOM_FLAG = featureFlags.register({
   id: 'enableChromeReliableRangeZoom',
@@ -271,7 +272,16 @@ async function loadTraceIntoEngine(
   // Plugins may call trace.initialPage.suggest(...) during onTraceLoad to
   // request that the app navigate somewhere other than /viewer.
   const initialRoute = trace.initialPage.getWinner() ?? '/viewer';
-  Router.navigate(`#!${initialRoute}?local_cache_key=${cacheUuid}`);
+  const routeParams = new URLSearchParams();
+  if (KEEP_TRACE_URL_ON_ROUTE_ARGS.get() && traceSource.type === 'URL') {
+    routeParams.set('url', traceSource.url);
+    if (app.initialRouteArgs.hide) {
+      routeParams.set('hide', String(app.initialRouteArgs.hide));
+    }
+  } else {
+    routeParams.set('local_cache_key', cacheUuid);
+  }
+  Router.navigate(`#!${initialRoute}?${routeParams.toString()}`);
 
   decideTabs(trace);
 

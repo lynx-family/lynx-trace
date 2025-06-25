@@ -74,6 +74,11 @@ export const ROUTE_SCHEMA = z
 
     // Startup commands to execute on trace load (JSON-encoded array)
     startupCommands: z.string().optional().catch(undefined),
+
+    /**
+     * If true, hides the sidebar.
+     */
+    hide: z.boolean().optional().catch(undefined),
   })
 
   // Allow arbitrary values to pass through, these may be forwarded to plugins.
