@@ -81,6 +81,7 @@ const DEFAULT_PORT = 10000;
 
 const cfg = {
   minifyJs: '',
+  gzipJs: '',
   noSourceMaps: false,
   noTreeshake: false,
   watch: false,
@@ -224,6 +225,7 @@ Env-var overrides:
     help: 'filter Jest tests by regex, e.g. \'chrome_render\'',
   });
   parser.add_argument('--no-override-gn-args', {action: 'store_true'});
+  parser.add_argument('--gzip-js', {action: 'store_true'});
   parser.add_argument('--typecheck', {
     action: 'store_true',
     help: 'Only type-check (tsc --noEmit), skip bundling',
@@ -281,6 +283,9 @@ Env-var overrides:
   cfg.noOverrideGnArgs = !!args.no_override_gn_args;
   if (args.minify_js) {
     cfg.minifyJs = args.minify_js;
+  }
+  if (args.gzip_js) {
+    cfg.gzipJs = args.gzip_js;
   }
   cfg.noSourceMaps = !!args.no_source_maps;
   cfg.noTreeshake = !!args.no_treeshake;
@@ -722,6 +727,9 @@ function bundleJs(cfgName) {
   }
   if (cfg.minifyJs) {
     args.push('--environment', `MINIFY_JS:${cfg.minifyJs}`);
+  }
+  if (cfg.gzipJs) {
+    args.push('--environment', `GZIP_JS:${cfg.gzipJs}`);
   }
   if (cfg.noSourceMaps) {
     args.push('--environment', 'NO_SOURCE_MAPS:true');

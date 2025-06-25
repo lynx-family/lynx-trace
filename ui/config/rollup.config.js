@@ -21,6 +21,7 @@ const sourcemaps = require('rollup-plugin-sourcemaps2');
 const json = require('@rollup/plugin-json');
 const {SourceMapConsumer, SourceMapGenerator} = require('source-map');
 const babel = require('@rollup/plugin-babel');
+const gzipPlugin = require('rollup-plugin-gzip').default;
 
 const ROOT_DIR = path.dirname(path.dirname(__dirname)); // The repo root.
 const OUT_SYMLINK = path.join(ROOT_DIR, 'ui/out');
@@ -111,7 +112,7 @@ function embedMinimalSourceMap() {
   };
 }
 
-function defBundle(tsRoot, bundle, distDir) {
+function defBundle(tsRoot, bundle, distDir, needGzip = false) {
   return {
     input: `${OUT_SYMLINK}/${tsRoot}/${bundle}/index.js`,
     output: {
@@ -180,7 +181,7 @@ function defBundle(tsRoot, bundle, distDir) {
       // a minimal source map for error reporting. Skip both when source
       // maps are disabled.
       ...(NO_SOURCE_MAPS ? [] : [sourcemaps(), embedMinimalSourceMap()]),
-    ].concat(maybeUglify()),
+    ].concat(maybeUglify(), maybeGZIP(needGzip)),
     onwarn: function (warning, warn) {
       if (warning.code === 'CIRCULAR_DEPENDENCY') {
         // Ignore circular dependency warnings coming from third party code.
@@ -230,6 +231,12 @@ function maybeUglify() {
   return [terser(opts)];
 }
 
+function maybeGZIP(needGzip = false) {
+  const gzipEnv = process.env['GZIP_JS'];
+  if (!gzipEnv || !needGzip) return [];
+  return [gzipPlugin()];
+}
+
 const maybeBigtrace = process.env['ENABLE_BIGTRACE']
   ? [defBundle('tsc/bigtrace', 'bigtrace', 'dist_version/bigtrace')]
   : [];
@@ -239,7 +246,7 @@ const maybeOpenPerfettoTrace = process.env['ENABLE_OPEN_PERFETTO_TRACE']
   : [];
 
 module.exports = [
-  defBundle('tsc', 'frontend', 'dist_version'),
+  defBundle('tsc', 'frontend', 'dist_version', true),
   defBundle('tsc', 'engine', 'dist_version'),
   defBundle('tsc', 'traceconv', 'dist_version'),
   defBundle('tsc', 'chrome_extension', 'chrome_extension'),

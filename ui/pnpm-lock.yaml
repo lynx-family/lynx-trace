@@ -229,6 +229,9 @@ devDependencies:
   rollup:
     specifier: ^4.60.1
     version: 4.60.1
+  rollup-plugin-gzip:
+    specifier: ^4.0.1
+    version: 4.2.0(rollup@4.60.1)
   rollup-plugin-re:
     specifier: ^1.0.7
     version: 1.0.7
@@ -6922,6 +6925,18 @@ packages:
   /robust-predicates@3.0.3:
     resolution: {integrity: sha512-NS3levdsRIUOmiJ8FZWCP7LG3QpJyrs/TE0Zpf1yvZu8cAJJ6QMW92H1c7kWpdIHo8RvmLxN/o2JXTKHp74lUA==}
     dev: false
+
+  /rollup-plugin-gzip@4.2.0(rollup@4.60.1):
+    resolution: {integrity: sha512-XDs02OO6B5cJBQ6leATfdGJPJ9HPuQ841e21LVrbfcBL10gAcA/uxsXnherbUp3T/U9SWpfKKGpfqB4DSBisHw==}
+    engines: {node: '>=10.0.0'}
+    peerDependencies:
+      rollup: '>=2.0.0'
+    peerDependenciesMeta:
+      rollup:
+        optional: true
+    dependencies:
+      rollup: 4.60.1
+    dev: true
 
   /rollup-plugin-re@1.0.7:
     resolution: {integrity: sha512-TyFf3QaV/eJ/50k4wp5BM0SodGy0Idq0uOgvA1q3gHRwgXLPVX5y3CRKkBuHzKTZPC9CTZX7igKw5UvgjDls8w==}
