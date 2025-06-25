@@ -50,6 +50,8 @@ export interface SourceMapDecodePopup {
 interface SourceMapData {
   key: string;
   data: string;
+  sources: string[];
+  sourcesContent: string[];
 }
 
 interface SourceFile {

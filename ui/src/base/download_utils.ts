@@ -108,6 +108,13 @@ export function downloadUrl({fileName, url}: {fileName: string; url: string}) {
   document.body.removeChild(a);
 }
 
+// Initiate download of |data| a file with a given name.
+export function downloadData(fileName: string, ...data: ArrayBufferLike[]) {
+  const blob = new Blob(data, {type: 'application/octet-stream'});
+  using url = createUrl(blob);
+  downloadUrl({url: url.value, fileName});
+}
+
 function createUrl(blob: Blob): Disposable & {readonly value: string} {
   const url = URL.createObjectURL(blob);
   return {
