@@ -23,7 +23,7 @@ import {LYNX_ISSUES_PLUGIN_ID} from '../../lynx_perf/constants';
 import {TrackNode} from '../../public/workspace';
 import {isLynxBackgroundScriptThreadGroup} from '../../lynx_perf/track_utils';
 import {lynxPerfGlobals} from '../../lynx_perf/lynx_perf_globals';
-import {ThreadSortOrder} from '../lynx.ThreadGroups';
+import {ThreadSortOrder} from '../../lynx_perf/thread_order';
 
 const TRACK_TITLE = 'Performance Issues';
 /**
