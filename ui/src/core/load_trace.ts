@@ -284,8 +284,14 @@ async function loadTraceIntoEngine(
     if (app.initialRouteArgs.eventName) {
       routeParams.set('eventName', app.initialRouteArgs.eventName);
     }
+    if (app.initialRouteArgs.focus_lynxviews) {
+      routeParams.set('focus_lynxviews', app.initialRouteArgs.focus_lynxviews);
+    }
   } else {
     routeParams.set('local_cache_key', cacheUuid);
+    if (app.initialRouteArgs.focus_lynxviews) {
+      routeParams.set('focus_lynxviews', app.initialRouteArgs.focus_lynxviews);
+    }
   }
   Router.navigate(`#!${initialRoute}?${routeParams.toString()}`);
 

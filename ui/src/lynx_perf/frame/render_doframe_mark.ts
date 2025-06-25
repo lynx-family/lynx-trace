@@ -52,8 +52,9 @@ export function renderDoFrameTag(
     ctx.arc(x, y, radius, 0, 2 * Math.PI);
     ctx.closePath();
 
-    ctx.fillStyle =
-      value.dur >= DROP_FRAME_THRESHOLD * 2
+    ctx.fillStyle = !lynxPerfGlobals.shouldShowSlice(value.id)
+      ? 'rgb(180, 180, 180)'
+      : value.dur >= DROP_FRAME_THRESHOLD * 2
         ? 'rgb(180, 0, 0)'
         : value.dur >= DROP_FRAME_THRESHOLD
           ? 'rgb(180, 125, 0)'

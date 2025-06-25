@@ -14,7 +14,12 @@
 
 import {SourceDataset} from '../../trace_processor/dataset';
 import {LONG, LONG_NULL, NUM} from '../../trace_processor/query_result';
-import {generateRenderQuery} from './slice_track';
+import {lynxPerfGlobals} from '../../lynx_perf/lynx_perf_globals';
+import {
+  ColorVariant,
+  generateRenderQuery,
+  getLynxFocusColorVariant,
+} from './slice_track';
 
 describe('generateRenderQuery', () => {
   test('minimal query', () => {
@@ -64,6 +69,32 @@ describe('generateRenderQuery', () => {
     });
     expect(generateRenderQuery(dataset)).toBe(
       `SELECT id AS id, ts AS ts, layer AS layer, COALESCE(dur, -1) AS dur, internal_layout(ts, COALESCE(dur, -1)) OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS depth FROM (${dataset.query()})`,
+    );
+  });
+});
+
+describe('getLynxFocusColorVariant', () => {
+  afterEach(() => {
+    lynxPerfGlobals.reset();
+  });
+
+  test('keeps normal variants when no LynxView filter is active', () => {
+    expect(getLynxFocusColorVariant(1, ColorVariant.BASE)).toBe(
+      ColorVariant.BASE,
+    );
+    expect(getLynxFocusColorVariant(1, ColorVariant.VARIANT)).toBe(
+      ColorVariant.VARIANT,
+    );
+  });
+
+  test('disables slices filtered out by Focus LynxView', () => {
+    lynxPerfGlobals.updateFilteredTraceSet(new Set([2]));
+
+    expect(getLynxFocusColorVariant(1, ColorVariant.BASE)).toBe(
+      ColorVariant.BASE,
+    );
+    expect(getLynxFocusColorVariant(2, ColorVariant.BASE)).toBe(
+      ColorVariant.DISABLED,
     );
   });
 });

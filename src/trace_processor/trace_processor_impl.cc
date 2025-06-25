@@ -138,7 +138,8 @@
 #include "src/trace_processor/sqlite/sql_stats_table.h"
 #include "src/trace_processor/sqlite/stats_table.h"
 #include "src/trace_processor/storage/trace_storage.h"
-#include "src/trace_processor/tables/android_tables_py.h"   // IWYU pragma: keep
+#include "src/trace_processor/tables/android_tables_py.h"  // IWYU pragma: keep
+#include "src/trace_processor/tables/instance_id_tables_py.h"  // IWYU pragma: keep
 #include "src/trace_processor/tables/jit_tables_py.h"       // IWYU pragma: keep
 #include "src/trace_processor/tables/memory_tables_py.h"    // IWYU pragma: keep
 #include "src/trace_processor/tables/metadata_tables_py.h"  // IWYU pragma: keep
@@ -1223,6 +1224,7 @@ std::vector<PerfettoSqlEngine::StaticTable> TraceProcessorImpl::GetStaticTables(
   AddStaticTable(tables, storage->mutable_metadata_table());
   AddStaticTable(tables, storage->mutable_slice_table());
   AddStaticTable(tables, storage->mutable_source_file_table());
+  AddStaticTable(tables, storage->mutable_instance_id_slice_table());
   AddStaticTable(tables, storage->mutable_track_event_callstacks_table());
   AddStaticTable(tables, storage->mutable_flow_table());
   AddStaticTable(tables, storage->mutable_stack_profile_frame_table());

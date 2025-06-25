@@ -28,10 +28,11 @@
 #include "src/trace_processor/core/dataframe/dataframe.h"
 #include "src/trace_processor/core/dataframe/specs.h"
 #include "src/trace_processor/tables/all_tables_fwd.h"
-#include "src/trace_processor/tables/android_tables_py.h"   // IWYU pragma: keep
-#include "src/trace_processor/tables/counter_tables_py.h"   // IWYU pragma: keep
-#include "src/trace_processor/tables/etm_tables_py.h"       // IWYU pragma: keep
-#include "src/trace_processor/tables/flow_tables_py.h"      // IWYU pragma: keep
+#include "src/trace_processor/tables/android_tables_py.h"  // IWYU pragma: keep
+#include "src/trace_processor/tables/counter_tables_py.h"  // IWYU pragma: keep
+#include "src/trace_processor/tables/etm_tables_py.h"      // IWYU pragma: keep
+#include "src/trace_processor/tables/flow_tables_py.h"     // IWYU pragma: keep
+#include "src/trace_processor/tables/instance_id_tables_py.h"  // IWYU pragma: keep
 #include "src/trace_processor/tables/jit_tables_py.h"       // IWYU pragma: keep
 #include "src/trace_processor/tables/memory_tables_py.h"    // IWYU pragma: keep
 #include "src/trace_processor/tables/metadata_tables_py.h"  // IWYU pragma: keep
@@ -99,6 +100,18 @@ TraceStorage::~TraceStorage() {
         &tables_storage_[(i - 1) * sizeof(dataframe::Dataframe)])
         ->~Dataframe();
   }
+}
+
+void TraceStorage::SetInstanceIdForSlice(uint32_t slice,
+                                         std::string instance_id) {
+  if (slice_to_instance_id_.find(slice) != slice_to_instance_id_.end() ||
+      instance_id == "-1") {
+    return;
+  }
+  slice_to_instance_id_[slice] = instance_id;
+  tables::InstanceIdSliceTable::Row row(
+      static_cast<int64_t>(slice), InternString(base::StringView(instance_id)));
+  mutable_instance_id_slice_table()->Insert(row);
 }
 
 uint32_t TraceStorage::SqlStats::RecordQueryBegin(const std::string& query,

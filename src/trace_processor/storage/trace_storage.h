@@ -285,6 +285,18 @@ class TraceStorage {
     return it->second;
   }
 
+  void SetInstanceIdForSlice(uint32_t slice, std::string instance_id);
+
+  std::optional<std::string> GetInstanceIdForSlice(uint32_t slice) {
+    auto it = slice_to_instance_id_.find(slice);
+    if (it == slice_to_instance_id_.end()) {
+      return std::nullopt;
+    }
+    return it->second;
+  }
+
+  void ClearInstanceIdForSlice() { slice_to_instance_id_.clear(); }
+
   void AddPipelineFlag(const std::string& pipeline_id,
                        std::string timing_flag) {
     auto it = pipeline_id_to_flag_.find(pipeline_id);
@@ -417,6 +429,13 @@ class TraceStorage {
   }
   tables::TrackEventCallstacksTable* mutable_track_event_callstacks_table() {
     return mutable_table<tables::TrackEventCallstacksTable>();
+  }
+
+  const tables::InstanceIdSliceTable& instance_id_slice_table() const {
+    return table<tables::InstanceIdSliceTable>();
+  }
+  tables::InstanceIdSliceTable* mutable_instance_id_slice_table() {
+    return mutable_table<tables::InstanceIdSliceTable>();
   }
 
   const tables::SpuriousSchedWakeupTable& spurious_sched_wakeup_table() const {
@@ -1236,6 +1255,7 @@ class TraceStorage {
 
   std::map<std::string, std::string> instance_id_to_url_;
   std::map<std::string, std::string> pipeline_id_to_flag_;
+  std::map<uint32_t, std::string> slice_to_instance_id_;
 };
 
 }  // namespace perfetto::trace_processor

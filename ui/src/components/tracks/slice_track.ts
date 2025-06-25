@@ -68,6 +68,7 @@ import {
   rowTopFromLayout,
 } from '../../base/renderer';
 import {cropText} from '../../base/string_utils';
+import {lynxPerfGlobals} from '../../lynx_perf/lynx_perf_globals';
 
 const SLICE_MIN_WIDTH_FOR_TEXT_PX = 5;
 const CHEVRON_WIDTH_PX = 10;
@@ -77,6 +78,16 @@ export const enum ColorVariant {
   BASE = 0,
   VARIANT = 1,
   DISABLED = 2,
+}
+
+export function getLynxFocusColorVariant(
+  sliceId: number,
+  colorVariant: ColorVariant,
+): ColorVariant {
+  if (!lynxPerfGlobals.shouldShowSlice(sliceId)) {
+    return ColorVariant.DISABLED;
+  }
+  return colorVariant;
 }
 
 interface Slice<T> {
@@ -504,7 +515,7 @@ export class SliceTrack<T extends RowSchema> implements TrackRenderer {
 
     for (let j = 0; j < count; j++) {
       const slice = slices[j];
-      const colorVariant = colorVariants[j];
+      const colorVariant = getLynxFocusColorVariant(slice.id, colorVariants[j]);
       const cs = slice.colorScheme;
       const color =
         colorVariant === ColorVariant.BASE
@@ -661,7 +672,10 @@ export class SliceTrack<T extends RowSchema> implements TrackRenderer {
 
     for (let j = 0; j < count; j++) {
       const instant = instants[j];
-      const colorVariant = colorVariants[j];
+      const colorVariant = getLynxFocusColorVariant(
+        instant.id,
+        colorVariants[j],
+      );
       const cs = instant.colorScheme;
       const color =
         colorVariant === ColorVariant.BASE

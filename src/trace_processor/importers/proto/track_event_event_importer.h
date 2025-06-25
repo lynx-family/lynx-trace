@@ -1355,7 +1355,7 @@ class TrackEventEventImporter {
             parser_->args_parser_.ParseDebugAnnotation(*it, args_writer));
       }
 
-      AddExtraArgs(args_writer);
+      AddExtraArgs(args_writer, inserter);
     }
 
     if (legacy_passthrough_utid_) {
@@ -1442,13 +1442,14 @@ class TrackEventEventImporter {
 
   // TODO(suguannan.906): This is not a reasonable implementation. We should
   // optimize this once a better solution is identified.
-  void AddExtraArgs(ArgsParser& args_writer) {
+  void AddExtraArgs(ArgsParser& args_writer, BoundInserter* inserter) {
     static const char* BindPipelineIDWithTimingFlag =
         "Timing::BindPipelineIDWithTimingFlag";
     static const char* LynxLoadTemplate = "LynxLoadTemplate";
     NullTermStringView name = storage_->GetString(name_id_);
     bool is_timing_flag_event = false;
     bool is_load_template_event = false;
+    bool has_instance_id_parameter = false;
     if (!name.empty() &&
         strcmp(name.c_str(), BindPipelineIDWithTimingFlag) == 0) {
       is_timing_flag_event = true;
@@ -1488,6 +1489,10 @@ class TrackEventEventImporter {
       if (id.empty()) {
         continue;
       }
+      if (id != "-1") {
+        has_instance_id_parameter = true;
+        context_->storage->SetInstanceIdForSlice(inserter->GetRow(), id);
+      }
       auto url = context_->storage->GetInstanceUrl(id);
       if (url) {
         auto debug_key = parser_->args_parser_.EnterDictionary("url");
@@ -1495,13 +1500,18 @@ class TrackEventEventImporter {
       }
     }
 
+    const std::string inherited_instance_id = inserter->GetInstanceId();
+    if (!has_instance_id_parameter && !inherited_instance_id.empty()) {
+      auto debug_key = parser_->args_parser_.EnterDictionary("instance_id");
+      args_writer.AddString(debug_key.key(), inherited_instance_id);
+    }
+
     if (event_.has_flow_ids_old() || event_.has_flow_ids()) {
       auto it =
           event_.has_flow_ids() ? event_.flow_ids() : event_.flow_ids_old();
       FlowId flow_id = *it;
       auto key = parser_->args_parser_.EnterDictionary("flowId");
-      args_writer.AddUnsignedInteger(key.key(),
-                                     static_cast<uint64_t>(flow_id));
+      args_writer.AddUnsignedInteger(key.key(), static_cast<uint64_t>(flow_id));
     }
     if (event_.has_terminating_flow_ids_old() ||
         event_.has_terminating_flow_ids()) {
@@ -1510,8 +1520,7 @@ class TrackEventEventImporter {
                     : event_.terminating_flow_ids_old();
       FlowId flow_id = *it;
       auto key = parser_->args_parser_.EnterDictionary("terminateFlowId");
-      args_writer.AddUnsignedInteger(key.key(),
-                                     static_cast<uint64_t>(flow_id));
+      args_writer.AddUnsignedInteger(key.key(), static_cast<uint64_t>(flow_id));
     }
   }
 

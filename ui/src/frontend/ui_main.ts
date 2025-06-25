@@ -24,6 +24,7 @@ import {renderStatusBar} from './statusbar';
 import {taskTracker} from './task_tracker';
 import {Topbar} from './topbar';
 import {SourceFileDrawer} from '../source_map/source_file_drawer';
+import {RightSidebar} from '../components/lynx_perf/right_sidebar/right_sidebar';
 
 const showStatusBarFlag = featureFlags.register({
   id: 'Enable status bar',
@@ -69,6 +70,7 @@ export class UiMain implements m.ClassComponent {
       }),
       m('.pf-ui-main__page-container', app.pages.renderPageForCurrentRoute()),
       m(SourceFileDrawer),
+      m(RightSidebar),
       m(CookieConsent),
       maybeRenderFullscreenModalDialog(),
       showStatusBarFlag.get() && renderStatusBar(app),
