@@ -47,6 +47,7 @@ import {TrackEventSelection} from '../../public/selection';
 import {extensions} from '../extensions';
 import {TraceImpl} from '../../core/trace_impl';
 import {renderSliceArguments} from './slice_args';
+import {Args, ArgsDict, ArgValue} from '../sql_utils/args';
 import {SLICE_TABLE} from '../widgets/sql/table_definitions';
 import {TrackEventRef} from '../widgets/track_event_ref';
 import {
@@ -59,6 +60,7 @@ import {
   titleWithHelp,
 } from '../distribution_panel';
 import {Dataset} from '../../trace_processor/dataset';
+import {eventLoggerState} from '../../event_logger';
 
 interface ContextMenuItem {
   name: string;
@@ -197,6 +199,34 @@ function getSliceContextMenuItems(slice: SliceDetails) {
   return ITEMS.filter((item) => item.shouldDisplay(slice));
 }
 
+function argValueToString(value: Args | undefined): string {
+  if (value === undefined || value === null || typeof value === 'object') {
+    return '';
+  }
+  return String(value);
+}
+
+function getArgValue(args: ArgsDict, path: string): ArgValue | undefined {
+  let value: Args | undefined = args;
+  for (const key of path.split('.')) {
+    if (value === null || typeof value !== 'object' || value instanceof Array) {
+      return undefined;
+    }
+    value = value[key];
+  }
+  return value === null || typeof value === 'object' ? undefined : value;
+}
+
+function getFirstArgString(args: ArgsDict, paths: string[]): string {
+  for (const path of paths) {
+    const value = argValueToString(getArgValue(args, path));
+    if (value) {
+      return value;
+    }
+  }
+  return '';
+}
+
 async function getSliceDetails(
   engine: Engine,
   id: number,
@@ -264,6 +294,8 @@ export class ThreadSliceDetailsPanel implements TrackEventDetailsPanel {
         sectionsToLoad.map((section) => section.load(selection)),
       );
     }
+
+    this.onDetailsPanelLoaded();
   }
 
   render() {
@@ -565,5 +597,45 @@ export class ThreadSliceDetailsPanel implements TrackEventDetailsPanel {
     } else {
       return undefined;
     }
+  }
+
+  private logThreadSliceDetails() {
+    if (this.sliceDetails) {
+      const name = this.sliceDetails.name;
+      const args = this.sliceDetails.args ?? {};
+      const dur = this.sliceDetails.dur;
+      let eventName = name;
+      if (name === 'CallJSB' || name === 'InvokeCallback') {
+        const firstArg = getFirstArgString(args, [
+          'debug.first_arg',
+          'args.first_arg',
+        ]);
+        const module = getFirstArgString(args, [
+          'debug.module_name',
+          'args.module_name',
+        ]);
+        const method = getFirstArgString(args, [
+          'debug.method_name',
+          'args.method_name',
+        ]);
+        if (module) {
+          eventName += '.' + module;
+        }
+        if (method) {
+          eventName += '.' + method;
+        }
+        if (firstArg) {
+          eventName += '.' + firstArg;
+        }
+      }
+      eventLoggerState.state.eventLogger.logEvent('trace_event_click', {
+        event_name: eventName,
+        event_dur: Number(dur),
+      });
+    }
+  }
+
+  private onDetailsPanelLoaded() {
+    this.logThreadSliceDetails();
   }
 }

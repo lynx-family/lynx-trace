@@ -138,7 +138,8 @@ DEPS_ALLOWLIST = [
     ('/public/lib/extensions', '/frontend/*'),
     ('/plugins/dev.perfetto.HeapProfile/*', '/frontend/trace_converter'),
     ('/lynx_features_flags/*', '/core/*'),
-    ('/core/load_trace', '/lynx_features_flags/index')
+    ('/core/load_trace', '/lynx_features_flags/index'),
+    ('/components/details/thread_slice_details_tab', '/event_logger/index')
 ]
 
 
