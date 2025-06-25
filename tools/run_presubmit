@@ -962,7 +962,7 @@ def main():
       if '://' not in hook_remote:
         candidates.append(f'{hook_remote}/main')
 
-    for fallback in ['origin/main', 'goog/main']:
+    for fallback in ['origin/develop/v50.x', 'origin/main', 'goog/main']:
       if fallback not in candidates:
         candidates.append(fallback)
 
