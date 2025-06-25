@@ -278,6 +278,12 @@ async function loadTraceIntoEngine(
     if (app.initialRouteArgs.hide) {
       routeParams.set('hide', String(app.initialRouteArgs.hide));
     }
+    if (app.initialRouteArgs.sliceId) {
+      routeParams.set('sliceId', app.initialRouteArgs.sliceId);
+    }
+    if (app.initialRouteArgs.eventName) {
+      routeParams.set('eventName', app.initialRouteArgs.eventName);
+    }
   } else {
     routeParams.set('local_cache_key', cacheUuid);
   }
