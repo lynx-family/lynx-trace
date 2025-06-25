@@ -63,7 +63,7 @@ export default class TimelinePlugin implements PerfettoPlugin {
       id: 'overviewVisible',
       name: 'Overview Panel',
       description: 'Show the panel providing an overview of the trace',
-      defaultValue: true,
+      defaultValue: false,
     });
   }
 
