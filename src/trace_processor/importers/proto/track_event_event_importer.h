@@ -1354,6 +1354,8 @@ class TrackEventEventImporter {
         log_errors(
             parser_->args_parser_.ParseDebugAnnotation(*it, args_writer));
       }
+
+      AddExtraArgs(args_writer);
     }
 
     if (legacy_passthrough_utid_) {
@@ -1436,6 +1438,62 @@ class TrackEventEventImporter {
     inserter->AddArg(parser_->source_location_line_number_key_id_,
                      Variadic::UnsignedInteger(line_number));
     return base::OkStatus();
+  }
+
+  // TODO(suguannan.906): This is not a reasonable implementation. We should
+  // optimize this once a better solution is identified.
+  void AddExtraArgs(ArgsParser& args_writer) {
+    static const char* BindPipelineIDWithTimingFlag =
+        "Timing::BindPipelineIDWithTimingFlag";
+    static const char* LynxLoadTemplate = "LynxLoadTemplate";
+    NullTermStringView name = storage_->GetString(name_id_);
+    bool is_timing_flag_event = false;
+    bool is_load_template_event = false;
+    if (!name.empty() &&
+        strcmp(name.c_str(), BindPipelineIDWithTimingFlag) == 0) {
+      is_timing_flag_event = true;
+    } else if (!name.empty() && strcmp(name.c_str(), LynxLoadTemplate) == 0) {
+      is_load_template_event = true;
+    }
+
+    for (auto it = event_.debug_annotations(); it; ++it) {
+      protos::pbzero::DebugAnnotation::Decoder annotation(*it);
+      if (!annotation.has_name()) {
+        continue;
+      }
+      const std::string debug_name = annotation.name().ToStdString();
+      if (!is_timing_flag_event && debug_name == "pipeline_id" &&
+          annotation.has_string_value()) {
+        const std::string id = annotation.string_value().ToStdString();
+        auto flags = context_->storage->GetPipelineFlags(id);
+        if (flags) {
+          auto debug_key =
+              parser_->args_parser_.EnterDictionary("timing_flags");
+          args_writer.AddString(debug_key.key(), *flags);
+        }
+      }
+
+      if (is_load_template_event ||
+          (debug_name != "instance_id" && debug_name != "instance_id_")) {
+        continue;
+      }
+      std::string id;
+      if (annotation.has_string_value()) {
+        id = annotation.string_value().ToStdString();
+      } else if (annotation.has_uint_value()) {
+        id = std::to_string(annotation.uint_value());
+      } else if (annotation.has_int_value()) {
+        id = std::to_string(annotation.int_value());
+      }
+      if (id.empty()) {
+        continue;
+      }
+      auto url = context_->storage->GetInstanceUrl(id);
+      if (url) {
+        auto debug_key = parser_->args_parser_.EnterDictionary("url");
+        args_writer.AddString(debug_key.key(), *url);
+      }
+    }
   }
 
   base::Status ParseLogMessage(ConstBytes blob, BoundInserter* inserter) {

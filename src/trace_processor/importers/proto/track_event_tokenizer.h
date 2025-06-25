@@ -94,6 +94,8 @@ class TrackEventTokenizer {
       const protos::pbzero::TrackEvent_Decoder&,
       const protos::pbzero::TrackEvent_LegacyEvent_Decoder&,
       PacketSequenceStateGeneration& state);
+  base::Status HandleExtraArgsValues(
+      const protos::pbzero::TrackEvent::Decoder&);
 
   // Helper to record tokenization errors with packet offset
   void RecordTokenizationError(size_t stat_key, TraceBlobView* packet);
