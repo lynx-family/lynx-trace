@@ -392,6 +392,14 @@ bool SliceTracker::MaybeCloseStack(int64_t new_ts,
       continue;
     }
 
+    auto category =
+        context_->storage->GetString(ref.category().value_or(kNullStringId))
+            .c_str();
+    if (strcmp(category, "jsprofile") == 0 && incomplete_descendent) {
+      ref.set_dur(new_ts - ref.ts());
+      continue;
+    }
+
     if (incomplete_descendent) {
       PERFETTO_DCHECK(new_ts >= start_ts);
 

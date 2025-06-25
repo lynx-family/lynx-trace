@@ -33,6 +33,7 @@
 #include "src/trace_processor/importers/proto/deobfuscation_module.h"
 #include "src/trace_processor/importers/proto/graphics_event_module.h"
 #include "src/trace_processor/importers/proto/heap_graph_module.h"
+#include "src/trace_processor/importers/proto/js_profile_module.h"
 #include "src/trace_processor/importers/proto/metadata_module.h"
 #include "src/trace_processor/importers/proto/network_trace_module.h"
 #include "src/trace_processor/importers/proto/pixel_modem_module.h"
@@ -94,6 +95,9 @@ void RegisterAdditionalModules(ProtoImporterModuleContext* module_context,
   module_context->modules.emplace_back(
       new WinscopeModule(module_context, context));
 #endif
+
+  module_context->modules.emplace_back(
+      new JSProfileModule(module_context, context));
 
   // Ftrace/Etw modules are special, because it has one extra method for parsing
   // ftrace/etw packets. So we need to store a pointer to it separately.
