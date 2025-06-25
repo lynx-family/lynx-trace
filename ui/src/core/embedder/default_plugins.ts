@@ -101,4 +101,6 @@ export const defaultPlugins = [
   'lynx.Sourcefile',
   'lynx.SourceMap',
   'lynx.Description',
+  'lynx.Perf',
+  'lynx.Element',
 ];

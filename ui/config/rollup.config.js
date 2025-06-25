@@ -20,6 +20,7 @@ const replace = require('rollup-plugin-re');
 const sourcemaps = require('rollup-plugin-sourcemaps2');
 const json = require('@rollup/plugin-json');
 const {SourceMapConsumer, SourceMapGenerator} = require('source-map');
+const babel = require('@rollup/plugin-babel');
 
 const ROOT_DIR = path.dirname(path.dirname(__dirname)); // The repo root.
 const OUT_SYMLINK = path.join(ROOT_DIR, 'ui/out');
@@ -32,7 +33,11 @@ function embedMinimalSourceMap() {
     name: 'embed-minimal-sourcemap',
     async generateBundle(options, bundle) {
       for (const chunk of Object.values(bundle)) {
-        if (!chunk.fileName || !chunk.fileName.endsWith('_bundle.js') || !chunk.map) {
+        if (
+          !chunk.fileName ||
+          !chunk.fileName.endsWith('_bundle.js') ||
+          !chunk.map
+        ) {
           continue;
         }
 
@@ -95,7 +100,10 @@ function embedMinimalSourceMap() {
             console.log(`Embedded minimal source map into ${chunk.fileName}`);
           }
         } catch (err) {
-          console.error(`Error creating minimal source map for ${chunk.fileName}:`, err.message);
+          console.error(
+            `Error creating minimal source map for ${chunk.fileName}:`,
+            err.message,
+          );
           // Don't fail the build, just skip embedding
         }
       }
@@ -146,8 +154,14 @@ function defBundle(tsRoot, bundle, distDir) {
         strictRequires: true,
       }),
 
-
       json(),
+
+      babel({
+        babelHelpers: 'bundled',
+        exclude: 'node_modules/**',
+        presets: ['@babel/preset-react'],
+        extensions: ['.ts', '.tsx'],
+      }),
 
       replace({
         patterns: [
