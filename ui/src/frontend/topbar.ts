@@ -23,13 +23,16 @@ import {Button} from '../widgets/button';
 import {Intent} from '../widgets/common';
 import {Popup, PopupPosition} from '../widgets/popup';
 import {Omnibox} from './omnibox';
+import {HIDE_ERROR_ICON_ON_TOPBAR_FLAG} from '../lynx_features_flags';
 
 class TraceErrorIcon implements m.ClassComponent<TraceImplAttrs> {
   private tracePopupErrorDismissed = false;
 
   view({attrs}: m.CVnode<TraceImplAttrs>) {
     const trace = attrs.trace;
-    if (AppImpl.instance.embeddedMode) return;
+    if (AppImpl.instance.embeddedMode || HIDE_ERROR_ICON_ON_TOPBAR_FLAG.get()) {
+      return;
+    }
 
     const mode = AppImpl.instance.omnibox.mode;
     const totErrors = trace.traceInfo.importErrors + trace.loadingErrors.length;
