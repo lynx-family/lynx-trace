@@ -17,17 +17,19 @@
 // LICENSE file in the root directory of this source tree.
 
 import m from 'mithril';
-import {Duration, duration, Time, time} from '../../base/time';
+
+import {TimelineFetcher} from '../components/tracks/track_helper';
+import {BaseSlice} from './types';
+import {Point2D} from '../base/geom';
+import {Trace} from '../public/trace';
 import {
   TrackMouseEvent,
   TrackRenderContext,
   TrackRenderer,
-} from '../../public/track';
-import {Point2D} from '../../base/geom';
-import {BaseSlice} from './types';
-import {Trace} from '../../public/trace';
-import {TimelineFetcher} from '../../components/tracks/track_helper';
-import {ColorScheme} from '../../base/color_scheme';
+} from '../public/track';
+import {duration, Duration, time, Time} from '../base/time';
+import {TrackEventDetails} from '../public/selection';
+import {ColorScheme} from '../base/color_scheme';
 
 export const CHEVRON_WIDTH_PX = 10;
 
@@ -43,7 +45,10 @@ export abstract class LynxBaseTrack<T extends BaseSlice[]>
    * Data fetcher for timeline slices
    * Automatically handles windowing and resolution-based fetching
    */
-  protected fetcher = new TimelineFetcher<T>(this.onBoundsChange.bind(this));
+  private readonly fetcher = new TimelineFetcher<T>(
+    this.fetchDataForBounds.bind(this),
+  );
+  private pendingDataRequest?: Promise<void>;
 
   // Track interaction state
   protected hoverPos?: Point2D;
@@ -64,22 +69,22 @@ export abstract class LynxBaseTrack<T extends BaseSlice[]>
   // currently this method is only for plugin LYNX_ISSUES_PLUGIN_ID because it contains different track uri in one track.
   changeTrackUri(): void {}
 
-  /**
-   * Updates track data when visible window or resolution changes
-   * @param ctx - Rendering context with current view parameters
-   */
-  async onUpdate({
-    visibleWindow,
-    resolution,
-  }: TrackRenderContext): Promise<void> {
-    await this.fetcher.requestData(visibleWindow.toTimeSpan(), resolution);
+  protected getTrackData(ctx: TrackRenderContext): T | undefined {
+    if (this.pendingDataRequest === undefined) {
+      this.pendingDataRequest = this.fetcher
+        .requestData(ctx.visibleWindow.toTimeSpan(), ctx.resolution)
+        .catch((err) => {
+          console.error(err);
+        })
+        .finally(() => {
+          this.pendingDataRequest = undefined;
+        });
+    }
+    return this.fetcher.data;
   }
 
-  /**
-   * Cleans up resources when track is destroyed
-   */
-  async onDestroy(): Promise<void> {
-    this.fetcher[Symbol.dispose]();
+  protected getCachedData(): T | undefined {
+    return this.fetcher.data;
   }
 
   /**
@@ -104,7 +109,7 @@ export abstract class LynxBaseTrack<T extends BaseSlice[]>
    * @returns Slice under cursor or undefined if none found
    */
   findSlice(event: TrackMouseEvent): BaseSlice | undefined {
-    const data = this.fetcher.data;
+    const data = this.getCachedData();
     if (data === undefined) return undefined;
     for (let i = 0; i < data.length; i++) {
       const posX = event.timescale.timeToPx(Time.fromRaw(BigInt(data[i].ts)));
@@ -161,7 +166,7 @@ export abstract class LynxBaseTrack<T extends BaseSlice[]>
     }
   }
 
-  abstract onBoundsChange(
+  abstract fetchDataForBounds(
     start: time,
     end: time,
     resolution: duration,
@@ -241,5 +246,25 @@ export abstract class LynxBaseTrack<T extends BaseSlice[]>
     renderCtx.lineWidth = THICKNESS;
     renderCtx.strokeRect(x, y - THICKNESS / 2, width, height + THICKNESS);
     renderCtx.closePath();
+  }
+
+  getTitleFont(): string {
+    return `12px Roboto Condensed`;
+  }
+
+  async getSelectionDetails(
+    id: number,
+  ): Promise<TrackEventDetails | undefined> {
+    const data = this.getCachedData();
+    if (data === undefined) return undefined;
+    for (let i = 0; i < data.length; i++) {
+      if (id == data[i].id) {
+        return {
+          ts: Time.fromRaw(BigInt(data[i].ts)),
+          dur: Duration.fromRaw(BigInt(0)),
+        };
+      }
+    }
+    return undefined;
   }
 }

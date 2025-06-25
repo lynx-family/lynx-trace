@@ -16,30 +16,23 @@
 // Licensed under the Apache License Version 2.0 that can be found in the
 // LICENSE file in the root directory of this source tree.
 
-import {createStore} from '../../base/store';
-import {createEmptyLynxState} from './empty_state';
-import {IssueSummary, LynxState} from './types';
+import {Duration, Time} from '../base/time';
+import {TrackEventDetails} from '../public/selection';
+import {TrackRenderContext, TrackRenderer} from '../public/track';
 
-class LynxPerfGlobals {
-  private _store = createStore<LynxState>(createEmptyLynxState());
-
-  appendPerformanceIssue(issues: IssueSummary[]) {
-    this._store.edit((draft) => {
-      issues.forEach((item) => {
-        draft.issues.push(item);
-      });
-    });
+export class LynxIssueTrack implements TrackRenderer {
+  getHeight(): number {
+    return 0;
   }
 
-  get state(): LynxState {
-    return this._store.state;
-  }
+  render(_ctx: TrackRenderContext): void {}
 
-  resetIssueStatus() {
-    this._store.edit((draft) => {
-      Object.assign(draft, createEmptyLynxState());
-    });
+  async getSelectionDetails(
+    _id: number,
+  ): Promise<TrackEventDetails | undefined> {
+    return {
+      ts: Time.fromRaw(BigInt(0)),
+      dur: Duration.fromRaw(BigInt(0)),
+    };
   }
 }
-
-export const lynxPerfGlobals = new LynxPerfGlobals();

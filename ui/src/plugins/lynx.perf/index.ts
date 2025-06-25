@@ -19,10 +19,10 @@
 import {Trace} from '../../public/trace';
 import {PerfettoPlugin} from '../../public/plugin';
 import {LynxPerfTrack} from './tracks';
-import {LYNX_ISSUES_PLUGIN_ID} from '../../frontend/lynx_perf/constants';
+import {LYNX_ISSUES_PLUGIN_ID} from '../../lynx_perf/constants';
 import {TrackNode} from '../../public/workspace';
-import {isLynxBackgroundScriptThreadGroup} from '../../frontend/lynx_perf/track_utils';
-import {lynxPerfGlobals} from '../../frontend/lynx_perf/lynx_perf_globals';
+import {isLynxBackgroundScriptThreadGroup} from '../../lynx_perf/track_utils';
+import {lynxPerfGlobals} from '../../lynx_perf/lynx_perf_globals';
 import {ThreadSortOrder} from '../lynx.ThreadGroups';
 
 const TRACK_TITLE = 'Performance Issues';
@@ -42,6 +42,7 @@ export default class LynxPerf implements PerfettoPlugin {
    * guarantee those tracks will have been added yet.
    */
   async onTraceLoad(ctx: Trace): Promise<void> {
+    lynxPerfGlobals.resetIssueStatus();
     // Register main performance track
     ctx.tracks.registerTrack({
       uri: LYNX_ISSUES_PLUGIN_ID,

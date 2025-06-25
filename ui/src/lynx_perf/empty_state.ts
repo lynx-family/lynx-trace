@@ -16,18 +16,12 @@
 // Licensed under the Apache License Version 2.0 that can be found in the
 // LICENSE file in the root directory of this source tree.
 
-import {Component} from 'react';
+import {LynxState} from './types';
 
-
-interface TableColumnTitleProps {
-  title: string;
-}
-export class TableColumnTitle extends Component<TableColumnTitleProps> {
-  constructor(props: TableColumnTitleProps) {
-    super(props);
-  }
-
-  render() {
-    return <div className="table-header-text">{this.props.title}</div>;
-  }
+export function createEmptyLynxState(): LynxState {
+  return {
+    issues: [],
+    vitalTimestampLine: [],
+    selectedTimestamp: -1,
+  };
 }
