@@ -16,8 +16,13 @@
 // Licensed under the Apache License Version 2.0 that can be found in the
 // LICENSE file in the root directory of this source tree.
 
+import {AppImpl} from '../core/app_impl';
 import {TrackNode} from '../public/workspace';
-import {LYNX_BACKGROUND_THREAD_NAME} from './constants';
+import {
+  LYNX_ISSUES_PLUGIN_ID,
+  LYNX_BACKGROUND_THREAD_NAME,
+  LYNX_VITAL_TIMESTAMP_PLUGIN_ID,
+} from './constants';
 
 export function isLynxBackgroundScriptThreadGroup(item: TrackNode) {
   return (
@@ -25,5 +30,28 @@ export function isLynxBackgroundScriptThreadGroup(item: TrackNode) {
     item.children.some((item) =>
       item.name.includes(LYNX_BACKGROUND_THREAD_NAME),
     )
+  );
+}
+
+export function inLynxTrackGroup(currentTrack: TrackNode) {
+  const workspace = AppImpl.instance.trace?.currentWorkspace;
+  if (workspace && workspace?.children.length) {
+    for (let i = 0; i < workspace.children.length; i++) {
+      const item: TrackNode = workspace.children[i];
+      if (
+        isLynxBackgroundScriptThreadGroup(item) &&
+        item.getTrackById(currentTrack.id)
+      ) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+export function customTopTrack(currentTrack: TrackNode) {
+  return (
+    currentTrack.uri === LYNX_ISSUES_PLUGIN_ID ||
+    currentTrack.uri === LYNX_VITAL_TIMESTAMP_PLUGIN_ID
   );
 }

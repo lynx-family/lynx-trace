@@ -25,17 +25,22 @@ import {
   findNonRenderingNodesRecursively,
   reConstructElementTree,
 } from './utils';
-import {LynxElement} from './types';
 import ElementManager from './element_manager';
 import {Engine} from '../../trace_processor/engine';
 import {TrackNode} from '../../public/workspace';
-import {Args, ArgsDict, getArgs} from '../../components/sql_utils/args';
+import {getArgs} from '../../components/sql_utils/args';
 import {asArgSetId} from '../../components/sql_utils/core_types';
 import {IssueRank, IssueSummary} from '../../lynx_perf/types';
 import {LynxElementIssueTrack} from './element_issue_track';
 import {LYNX_PERF_ELEMENT_PLUGIN_ID} from '../../lynx_perf/constants';
 import LynxPerf from '../lynx.perf';
 import {lynxPerfGlobals} from '../../lynx_perf/lynx_perf_globals';
+import {
+  findPrecedingIdenticalFlowIdSlice,
+  getFirstNumberArg,
+  getFirstStringArg,
+} from '../../lynx_perf/trace_utils';
+import {LynxElement} from '../../lynx_perf/common_components/element_tree/types';
 
 /**
  * Lynx Element Performance Analysis Plugin
@@ -56,47 +61,6 @@ export default class LynxElementPlugin implements PerfettoPlugin {
     this.issueNodesMap = new Map();
   }
 
-  private getArgValue(args: ArgsDict, path: string): Args | undefined {
-    let value: Args | undefined = args;
-    for (const key of path.split('.')) {
-      if (
-        value === null ||
-        typeof value !== 'object' ||
-        value instanceof Array
-      ) {
-        return undefined;
-      }
-      value = value[key];
-    }
-    return value;
-  }
-
-  private getFirstArg(args: ArgsDict, paths: string[]): Args | undefined {
-    for (const path of paths) {
-      const value = this.getArgValue(args, path);
-      if (value !== undefined && value !== null && typeof value !== 'object') {
-        return value;
-      }
-    }
-    return undefined;
-  }
-
-  private getFirstNumberArg(args: ArgsDict, paths: string[]): number {
-    const value = this.getFirstArg(args, paths);
-    if (typeof value === 'number') {
-      return value;
-    }
-    if (typeof value === 'string') {
-      return parseInt(value);
-    }
-    return 0;
-  }
-
-  private getFirstStringArg(args: ArgsDict, paths: string[]): string {
-    const value = this.getFirstArg(args, paths);
-    return typeof value === 'string' ? value : '';
-  }
-
   /**
    * Retrieves and updates screen dimensions from trace data
    * @param ctx - Trace context containing engine and storage
@@ -111,14 +75,14 @@ export default class LynxElementPlugin implements PerfettoPlugin {
         argSetId: NUM,
       });
       const args = await getArgs(engine, asArgSetId(row.argSetId));
-      const screenWidth = this.getFirstNumberArg(args, [
-        'debug.screen_width',
-        'args.screen_width',
-      ]);
-      const screenHeight = this.getFirstNumberArg(args, [
-        'debug.screen_height',
-        'args.screen_height',
-      ]);
+      const screenWidth =
+        getFirstNumberArg(args, ['debug.screen_width', 'args.screen_width']) ??
+        0;
+      const screenHeight =
+        getFirstNumberArg(args, [
+          'debug.screen_height',
+          'args.screen_height',
+        ]) ?? 0;
       ElementManager.updateScreenSize(screenWidth, screenHeight);
     }
   }
@@ -172,15 +136,16 @@ export default class LynxElementPlugin implements PerfettoPlugin {
     this.issueNodesMap.clear();
     for (; it.valid(); it.next()) {
       const args = await getArgs(engine, asArgSetId(it.argSetId));
-      const instanceId = this.getFirstNumberArg(args, [
-        'debug.instance_id',
-        'args.instance_id',
-      ]);
+      const instanceId =
+        getFirstNumberArg(args, ['debug.instance_id', 'args.instance_id']) ?? 0;
       if (!this.issueNodesMap.has(instanceId)) {
         this.issueNodesMap.set(instanceId, new Set());
       }
-      const proceedSliceTs = await this.findPrecedingSliceTs(engine, it.id);
-      const content = this.getFirstStringArg(args, [
+      const proceedSliceTs = await findPrecedingIdenticalFlowIdSlice(
+        engine,
+        it.id,
+      );
+      const content = getFirstStringArg(args, [
         'debug.content',
         'args.content',
       ]);
@@ -194,7 +159,7 @@ export default class LynxElementPlugin implements PerfettoPlugin {
         ElementManager.setTraceIssueElements(it.id, issueElements);
         data.push({
           id: it.id,
-          ts: proceedSliceTs > 0 ? proceedSliceTs : it.ts,
+          ts: proceedSliceTs?.ts ?? it.ts,
           description: `Performance issue detected in the Element tree, click for more details`,
           trackUri: LYNX_PERF_ELEMENT_PLUGIN_ID,
           issueRank: IssueRank.MODERATE,
@@ -202,33 +167,6 @@ export default class LynxElementPlugin implements PerfettoPlugin {
       }
     }
     return data;
-  }
-
-  /**
-   * Finds timestamp of preceding slice in execution flow
-   * @param engine - Trace processor engine
-   * @param sliceId - ID of current slice
-   * @returns Timestamp of preceding slice or -1 if not found
-   */
-  async findPrecedingSliceTs(engine: Engine, sliceId: number) {
-    const query = `
-    -- Include slices.flow to initialise indexes on 'flow.slice_in' and 'flow.slice_out'.
-    INCLUDE PERFETTO MODULE slices.flow;
-
-    select
-      t1.ts as beginTs,
-      t1.id as id
-    from preceding_flow(${sliceId}) f
-    join slice t1 on f.slice_out = t1.slice_id
-    `;
-    const result = await engine.query(query);
-    if (result.numRows() > 0) {
-      return result.firstRow({
-        beginTs: NUM,
-        id: NUM,
-      }).beginTs;
-    }
-    return -1;
   }
 
   /**
