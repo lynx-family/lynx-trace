@@ -19,6 +19,7 @@ $chevron-svg: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' 
 .pf-tree {
   display: grid;
   grid-template-columns: [left]auto [right]1fr;
+  --pf-tree-columns: [left] auto [right] 1fr;
   row-gap: 5px;
 
   .pf-tree-node {
@@ -94,11 +95,15 @@ $chevron-svg: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' 
   .pf-tree-children {
     display: grid;
     grid-column: 1 / span 2;
-    grid-template-columns: subgrid;
+    grid-template-columns: var(--pf-tree-columns);
     row-gap: 5px;
     border-left: solid var(--pf-color-border) 1px;
     margin-left: 6px;
     padding-left: 6px;
+
+    @supports (grid-template-columns: subgrid) {
+      grid-template-columns: subgrid;
+    }
   }
 }
 
