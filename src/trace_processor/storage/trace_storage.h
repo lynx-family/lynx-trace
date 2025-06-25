@@ -1170,6 +1170,13 @@ class TraceStorage {
     return static_cast<Variadic::Type>(idx);
   }
 
+  const tables::SourceFileTable& source_file_table() const {
+    return table<tables::SourceFileTable>();
+  }
+  tables::SourceFileTable* mutable_source_file_table() {
+    return mutable_table<tables::SourceFileTable>();
+  }
+
  private:
   using StringHash = uint64_t;
 

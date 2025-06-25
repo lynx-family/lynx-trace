@@ -61,6 +61,7 @@ import {
 } from '../distribution_panel';
 import {Dataset} from '../../trace_processor/dataset';
 import {eventLoggerState} from '../../event_logger';
+import {sourceMapState} from '../../source_map/source_map_state';
 
 interface ContextMenuItem {
   name: string;
@@ -339,6 +340,15 @@ export class ThreadSliceDetailsPanel implements TrackEventDetailsPanel {
     const distribution = this.renderDistribution(slice);
     const precFlows = this.renderPrecedingFlows(slice);
     const followingFlows = this.renderFollowingFlows(slice);
+    if (
+      sourceMapState.state.currentSourceFile !== undefined &&
+      slice.category !== 'jsprofile' &&
+      slice.category !== 'jsprofile_decoded'
+    ) {
+      sourceMapState.edit((draft) => {
+        draft.currentSourceFile = undefined;
+      });
+    }
     const args =
       hasArgs(slice.args) &&
       m(

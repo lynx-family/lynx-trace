@@ -120,15 +120,20 @@ function defBundle(tsRoot, bundle, distDir) {
     },
     plugins: [
       replace({
-        patterns:
-          process.env['IS_MEMORY64_ONLY'] != 'true'
+        patterns: [
+          ...(process.env['IS_MEMORY64_ONLY'] != 'true'
             ? [
                 {
                   test: './trace_processor_32_stub',
                   replace: '../gen/trace_processor',
                 },
               ]
-            : [],
+            : []),
+          {
+            test: /typeof URL === "function" \? URL : require\("url"\)\.URL/g,
+            replace: 'URL',
+          },
+        ],
       }),
 
       nodeResolve({

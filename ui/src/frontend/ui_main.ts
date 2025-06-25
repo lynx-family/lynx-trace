@@ -23,6 +23,7 @@ import {Sidebar} from './views/sidebar';
 import {renderStatusBar} from './statusbar';
 import {taskTracker} from './task_tracker';
 import {Topbar} from './topbar';
+import {SourceFileDrawer} from '../source_map/source_file_drawer';
 
 const showStatusBarFlag = featureFlags.register({
   id: 'Enable status bar',
@@ -67,6 +68,7 @@ export class UiMain implements m.ClassComponent {
         state: isSomethingLoading ? 'indeterminate' : 'none',
       }),
       m('.pf-ui-main__page-container', app.pages.renderPageForCurrentRoute()),
+      m(SourceFileDrawer),
       m(CookieConsent),
       maybeRenderFullscreenModalDialog(),
       showStatusBarFlag.get() && renderStatusBar(app),

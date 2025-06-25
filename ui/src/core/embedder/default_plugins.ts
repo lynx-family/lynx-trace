@@ -98,4 +98,5 @@ export const defaultPlugins = [
   'org.kernel.Wattson',
   'lynx.ThreadGroup',
   'lynx.RouterArgs',
+  'lynx.Sourcefile',
 ];

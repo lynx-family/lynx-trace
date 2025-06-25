@@ -49,6 +49,7 @@
 #include "src/trace_processor/sorter/trace_sorter.h"  // IWYU pragma: keep
 #include "src/trace_processor/storage/stats.h"
 #include "src/trace_processor/storage/trace_storage.h"
+#include "src/trace_processor/tables/source_map_tables_py.h"
 #include "src/trace_processor/util/clock_synchronizer.h"
 #include "src/trace_processor/util/json_parser.h"
 
@@ -549,6 +550,8 @@ base::Status JsonTraceTokenizer::ParseInternal(const char* start,
       return HandleSystemTraceEvent(start, end, out);
     case TracePosition::kInsideTraceEventsArray:
       return HandleTraceEvent(start, end, out);
+    case TracePosition::kInsideSourceFilesArray:
+      return HandleSourceFiles(start, end, out);
     case TracePosition::kEof: {
       return start == end
                  ? base::OkStatus()
@@ -933,7 +936,19 @@ base::Status JsonTraceTokenizer::HandleDictionaryKey(const char* start,
     return ParseInternal(next, end, out);
   }
 
-  // If we don't know the key for this JSON value just skip it_.
+  if (key == "sourceFiles") {
+    // Skip the [ character opening the array.
+    if (*next != '[') {
+      return base::ErrStatus(
+          "Failure parsing JSON: sourceFiles is not an array.");
+    }
+    next++;
+
+    position_ = TracePosition::kInsideSourceFilesArray;
+    return ParseInternal(next, end, out);
+  }
+
+  // If we don't know the key for this JSON value just skip it.
   switch (SkipOneJsonValue(next, end, &next)) {
     case SkipValueRes::kFatalError:
       return base::ErrStatus(
@@ -996,6 +1011,73 @@ base::Status JsonTraceTokenizer::OnPushDataToSorter() {
                   format_ == TraceFormat::kOnlyTraceEvents)
              ? base::OkStatus()
              : base::ErrStatus("JSON trace file is incomplete");
+}
+
+base::Status JsonTraceTokenizer::HandleSourceFiles(const char* start,
+                                                   const char* end,
+                                                   const char** out) {
+  const char* global_cur = start;
+  for (;;) {
+    const char* cur = global_cur;
+    if (PERFETTO_UNLIKELY(!json::internal::SkipWhitespace(cur, end))) {
+      return SetOutAndReturn(global_cur, out);
+    }
+    if (PERFETTO_UNLIKELY(*cur == ',')) {
+      if (PERFETTO_UNLIKELY(!json::internal::SkipWhitespace(++cur, end))) {
+        return SetOutAndReturn(global_cur, out);
+      }
+    }
+    if (PERFETTO_UNLIKELY(*cur == ']')) {
+      if (format_ == TraceFormat::kOnlyTraceEvents) {
+        position_ = TracePosition::kEof;
+        return SetOutAndReturn(cur + 1, out);
+      }
+      position_ = TracePosition::kDictionaryKey;
+      return ParseInternal(cur + 1, end, out);
+    }
+
+    inner_it_.Reset(cur, end);
+    if (!inner_it_.ParseStart()) {
+      if (!inner_it_.status().ok()) {
+        return base::ErrStatus("Failure parsing JSON: %s",
+                               inner_it_.status().c_message());
+      }
+      return SetOutAndReturn(global_cur, out);
+    }
+
+    std::optional<StringId> opt_file;
+    std::optional<StringId> opt_content;
+    for (;;) {
+      switch (inner_it_.ParseObjectFieldWithoutRecursing()) {
+        case State::kOk:
+        case State::kEndOfScope:
+          break;
+        case State::kError:
+          return base::ErrStatus("Failure parsing JSON: %s",
+                                 inner_it_.status().c_message());
+        case State::kIncompleteInput:
+          return SetOutAndReturn(global_cur, out);
+      }
+      if (inner_it_.eof()) {
+        break;
+      }
+      if (inner_it_.key() == "file") {
+        auto file = GetStringValue(inner_it_.value());
+        if (!file.empty()) {
+          opt_file = context_->storage->InternString(file);
+        }
+      } else if (inner_it_.key() == "content") {
+        auto content = GetStringValue(inner_it_.value());
+        opt_content = context_->storage->InternString(content);
+      }
+    }
+
+    if (opt_file.has_value() && opt_content.has_value()) {
+      context_->storage->mutable_source_file_table()->Insert(
+          {*opt_file, *opt_content});
+    }
+    global_cur = inner_it_.cur();
+  }
 }
 
 }  // namespace perfetto::trace_processor

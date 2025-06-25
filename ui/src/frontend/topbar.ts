@@ -24,6 +24,7 @@ import {Intent} from '../widgets/common';
 import {Popup, PopupPosition} from '../widgets/popup';
 import {Omnibox} from './omnibox';
 import {HIDE_ERROR_ICON_ON_TOPBAR_FLAG} from '../lynx_features_flags';
+import {sourceMapState} from '../source_map/source_map_state';
 
 class TraceErrorIcon implements m.ClassComponent<TraceImplAttrs> {
   private tracePopupErrorDismissed = false;
@@ -88,6 +89,7 @@ export class Topbar implements m.ClassComponent<TopbarAttrs> {
         ),
       },
       m(Omnibox, {trace}),
+      sourceMapState.state.sourceMapDecodePopup?.render(),
       trace && m(TraceErrorIcon, {trace}),
     );
   }

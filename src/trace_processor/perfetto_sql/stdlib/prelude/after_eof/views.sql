@@ -938,3 +938,16 @@ SELECT
 FROM __intrinsic_trace_import_logs AS l
 JOIN _stat_key_to_severity_and_name AS s
   ON l.stat_key = s.key;
+
+-- Contains the origin source in the trace.
+CREATE PERFETTO VIEW source_files (
+  -- The id of origin source file.
+  id LONG,
+  -- The name of origin source file.
+  file STRING,
+  -- The content of origin source file.
+  content STRING
+) AS
+SELECT
+  *
+FROM __internal_source_file;

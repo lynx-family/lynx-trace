@@ -13,52 +13,96 @@
 // limitations under the License.
 
 import m from 'mithril';
+import {Anchor} from '../../widgets/anchor';
 import {MenuItem} from '../../widgets/menu';
-import {ArgsDict} from '../sql_utils/args';
+import {ArgsDict, ArgValue} from '../sql_utils/args';
 import {Trace} from '../../public/trace';
 import {renderArguments} from './args';
 import {extensions} from '../extensions';
 import {sqliteString} from '../../base/string_utils';
 import {SLICE_TABLE} from '../widgets/sql/table_definitions';
+import {sourceMapState} from '../../source_map/source_map_state';
+import {raf} from '../../core/raf_scheduler';
 
 // Renders slice arguments (key/value pairs) as a subtree.
 export function renderSliceArguments(trace: Trace, args: ArgsDict): m.Children {
-  return renderArguments(trace, args, (key, value) => {
-    const displayValue = value === null ? 'NULL' : String(value);
-    return [
-      m(MenuItem, {
-        label: 'Find slices with same arg value',
-        icon: 'search',
-        onclick: () => {
-          extensions.addLegacySqlTableTab(trace, {
-            table: SLICE_TABLE,
-            filters: [
-              {
-                op: (cols) => `${cols[0]} = ${sqliteString(displayValue)}`,
-                columns: [
-                  {
-                    column: 'display_value',
-                    source: {
-                      table: 'args',
-                      joinOn: {
-                        arg_set_id: 'arg_set_id',
-                        key: sqliteString(key),
+  return renderArguments(
+    trace,
+    args,
+    (key, value) => {
+      const displayValue = value === null ? 'NULL' : String(value);
+      const menuItems: m.Children[] = [
+        m(MenuItem, {
+          label: 'Find slices with same arg value',
+          icon: 'search',
+          onclick: () => {
+            extensions.addLegacySqlTableTab(trace, {
+              table: SLICE_TABLE,
+              filters: [
+                {
+                  op: (cols) => `${cols[0]} = ${sqliteString(displayValue)}`,
+                  columns: [
+                    {
+                      column: 'display_value',
+                      source: {
+                        table: 'args',
+                        joinOn: {
+                          arg_set_id: 'arg_set_id',
+                          key: sqliteString(key),
+                        },
                       },
                     },
-                  },
-                ],
-              },
-            ],
-          });
-        },
-      }),
-      m(MenuItem, {
-        label: 'Visualize argument values',
-        icon: 'query_stats',
-        onclick: () => {
-          extensions.addVisualizedArgTracks(trace, key);
-        },
-      }),
-    ];
+                  ],
+                },
+              ],
+            });
+          },
+        }),
+        m(MenuItem, {
+          label: 'Visualize argument values',
+          icon: 'query_stats',
+          onclick: () => {
+            extensions.addVisualizedArgTracks(trace, key);
+          },
+        }),
+      ];
+      if (key === 'args.originSource') {
+        menuItems.push(
+          m(MenuItem, {
+            label: 'Open source file',
+            icon: 'visibility',
+            onclick: () => {
+              openSourceFile(value);
+            },
+          }),
+        );
+      }
+      return menuItems;
+    },
+    (key, value) => {
+      if (key === 'args.originSource' && typeof value === 'string') {
+        return m(
+          Anchor,
+          {
+            icon: 'visibility',
+            onclick: () => {
+              openSourceFile(value);
+            },
+          },
+          value,
+        );
+      }
+      return undefined;
+    },
+  );
+}
+
+function openSourceFile(value: ArgValue) {
+  if (typeof value !== 'string') {
+    return;
+  }
+  sourceMapState.edit((draft) => {
+    draft.currentSourceFile = value;
   });
+  raf.scheduleFullRedraw();
 }

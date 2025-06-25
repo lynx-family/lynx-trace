@@ -27,10 +27,18 @@ export function renderArguments(
   trace: Trace,
   args: ArgsDict,
   extraMenuItems?: (key: string, arg: ArgValue) => m.Children,
+  extraValueRenderer?: (key: string, arg: ArgValue) => m.Children,
 ): m.Children {
   if (hasArgs(args)) {
     return Object.entries(args).map(([key, value]) =>
-      renderArgsTree(trace, key, key, value, extraMenuItems),
+      renderArgsTree(
+        trace,
+        key,
+        key,
+        value,
+        extraMenuItems,
+        extraValueRenderer,
+      ),
     );
   }
   return undefined;
@@ -46,6 +54,7 @@ function renderArgsTree(
   fullKey: string,
   args: Args,
   extraMenuItems?: (path: string, arg: ArgValue) => m.Children,
+  extraValueRenderer?: (path: string, arg: ArgValue) => m.Children,
 ): m.Children {
   if (args instanceof Array) {
     return m(
@@ -61,6 +70,7 @@ function renderArgsTree(
           `${fullKey}[${index}]`,
           value,
           extraMenuItems,
+          extraValueRenderer,
         ),
       ),
     );
@@ -74,6 +84,7 @@ function renderArgsTree(
         `${fullKey}.${childName}`,
         value,
         extraMenuItems,
+        extraValueRenderer,
       );
     }
     return m(
@@ -89,13 +100,14 @@ function renderArgsTree(
           `${fullKey}.${childName}`,
           child,
           extraMenuItems,
+          extraValueRenderer,
         ),
       ),
     );
   }
   return m(TreeNode, {
     left: renderArgKey(key, fullKey, args, extraMenuItems),
-    right: renderArgValue(args),
+    right: extraValueRenderer?.(fullKey, args) ?? renderArgValue(args),
   });
 }
 

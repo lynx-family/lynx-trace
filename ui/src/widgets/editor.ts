@@ -57,6 +57,10 @@ export interface EditorAttrs extends HTMLAttrs {
 
   // Callback for every change to the editor's content.
   onUpdate?: (text: string) => void;
+
+  // One-based line number to reveal and select after the editor is created or
+  // its controlled text changes.
+  readonly line?: number;
 }
 
 export class Editor implements m.ClassComponent<EditorAttrs> {
@@ -163,6 +167,7 @@ export class Editor implements m.ClassComponent<EditorAttrs> {
     if (attrs.autofocus) {
       this.focus();
     }
+    this.revealLine(attrs.line);
   }
 
   onupdate({attrs}: m.CVnodeDOM<EditorAttrs>): void {
@@ -180,6 +185,9 @@ export class Editor implements m.ClassComponent<EditorAttrs> {
         }),
       );
       this.latestText = attrs.text;
+      this.revealLine(attrs.line);
+    } else {
+      this.revealLine(attrs.line);
     }
   }
 
@@ -198,6 +206,19 @@ export class Editor implements m.ClassComponent<EditorAttrs> {
     return m('.pf-editor', {
       className: className,
       ref: attrs.ref,
+    });
+  }
+
+  private revealLine(line?: number) {
+    if (line === undefined || line < 1 || this.editorView === undefined) {
+      return;
+    }
+    const doc = this.editorView.state.doc;
+    const safeLine = Math.min(line, doc.lines);
+    const lineInfo = doc.line(safeLine);
+    this.editorView.dispatch({
+      selection: {head: lineInfo.from, anchor: lineInfo.to},
+      scrollIntoView: true,
     });
   }
 }
