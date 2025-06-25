@@ -62,6 +62,8 @@ import {
 import {Dataset} from '../../trace_processor/dataset';
 import {eventLoggerState} from '../../event_logger';
 import {sourceMapState} from '../../source_map/source_map_state';
+import {getDescription} from '../../description/get_description';
+import {DescriptionSection} from '../../description/description_section';
 
 interface ContextMenuItem {
   name: string;
@@ -340,6 +342,7 @@ export class ThreadSliceDetailsPanel implements TrackEventDetailsPanel {
     const distribution = this.renderDistribution(slice);
     const precFlows = this.renderPrecedingFlows(slice);
     const followingFlows = this.renderFollowingFlows(slice);
+    const description = this.renderDescription();
     if (
       sourceMapState.state.currentSourceFile !== undefined &&
       slice.category !== 'jsprofile' &&
@@ -361,6 +364,7 @@ export class ThreadSliceDetailsPanel implements TrackEventDetailsPanel {
       precFlows !== undefined ||
       followingFlows !== undefined ||
       args !== undefined ||
+      description !== undefined ||
       additionalSections !== undefined
     ) {
       return m(
@@ -368,6 +372,7 @@ export class ThreadSliceDetailsPanel implements TrackEventDetailsPanel {
         precFlows,
         followingFlows,
         args,
+        description,
         distribution,
         additionalSections,
       );
@@ -647,5 +652,21 @@ export class ThreadSliceDetailsPanel implements TrackEventDetailsPanel {
 
   private onDetailsPanelLoaded() {
     this.logThreadSliceDetails();
+  }
+
+  private renderDescription() {
+    const description = getDescription(
+      this.sliceDetails?.name,
+      this.sliceDetails?.args,
+    );
+
+    if (description && description.length > 0) {
+      return m(
+        Section,
+        {title: 'Description'},
+        m(DescriptionSection, {description}),
+      );
+    }
+    return undefined;
   }
 }

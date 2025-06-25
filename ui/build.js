@@ -424,6 +424,7 @@ Env-var overrides:
       }
 
       bundleJs('rollup.config.js');
+      generateDescriptions();
       genServiceWorkerManifestJson();
 
       // Watches the /dist. When changed:
@@ -1144,6 +1145,34 @@ function mklink(src, dst) {
     }
   }
   fs.symlinkSync(src, dst);
+}
+
+function generateDescriptions() {
+  const dstFile = 'description.json';
+  const desPath = pjoin(ROOT_DIR, 'ui/src/assets/description.json');
+  if (!fs.existsSync(desPath)) {
+    return;
+  }
+  const internalDesPath = pjoin(
+      ROOT_DIR, 'ui/src/assets/internal_description.json');
+  if (!fs.existsSync(internalDesPath)) {
+    copyAssets(desPath, dstFile);
+  } else {
+    const desc = JSON.parse(fs.readFileSync(desPath, 'utf8') || '[]');
+    const internalDesc =
+        JSON.parse(fs.readFileSync(internalDesPath, 'utf8') || '[]');
+    const resultMap = new Map();
+    for (const item of desc) {
+      resultMap.set(item.name, item);
+    }
+    for (const item of internalDesc) {
+      resultMap.set(item.name, item);
+    }
+    const desDir = pjoin(cfg.outDistDir, 'assets');
+    ensureDir(desDir);
+    fs.writeFileSync(
+        pjoin(desDir, dstFile), JSON.stringify(Array.from(resultMap.values())));
+  }
 }
 
 function prepareBuildLock() {
