@@ -1,0 +1,113 @@
+// Copyright (C) 2025 The Android Open Source Project
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// Copyright 2025 The Lynx Authors. All rights reserved.
+// Licensed under the Apache License Version 2.0 that can be found in the
+// LICENSE file in the root directory of this source tree.
+
+import {Trace} from '../../public/trace';
+import {PerfettoPlugin} from '../../public/plugin';
+import {LynxNativeModuleTrack} from './tracks';
+import {TrackNode} from '../../public/workspace';
+import {LYNX_NATIVE_MODULE_ID} from '../../lynx_perf/constants';
+import {
+  getBackgroundScriptThreadTrackNode,
+  isLynxBackgroundScriptThreadGroup,
+} from '../../lynx_perf/track_utils';
+import {NUM} from '../../trace_processor/query_result';
+import {getArgs} from '../../components/sql_utils/args';
+import {asArgSetId} from '../../components/sql_utils/core_types';
+import LynxThreadGroupPlugin from '../lynx.ThreadGroups';
+import {getFirstStringArg} from '../../lynx_perf/trace_utils';
+
+/**
+ * Native Module Plugin
+ *
+ * Tracks and visualizes NativeModule (JS Bridge) calls in Lynx applications,
+ * providing insights into cross-platform communication performance.
+ */
+export default class LynxNativeModule implements PerfettoPlugin {
+  static readonly id = LYNX_NATIVE_MODULE_ID;
+  static readonly dependencies = [LynxThreadGroupPlugin];
+  /**
+   * This hook is called as the trace is loading. At this point the trace is
+   * loaded into trace processor and it's ready to process queries. This hook
+   * should be used for adding tracks and commands that depend on the trace.
+   *
+   * It should not be used for finding tracks from other plugins as there is no
+   * guarantee those tracks will have been added yet.
+   */
+  async onTraceLoad(ctx: Trace): Promise<void> {
+    // Register main visualization track
+    ctx.tracks.registerTrack({
+      uri: LYNX_NATIVE_MODULE_ID,
+      renderer: new LynxNativeModuleTrack(ctx, LYNX_NATIVE_MODULE_ID),
+    });
+
+    // Only show track if valid NativeModule calls exist
+    const showTrack = await this.containValidNativeModule(ctx);
+    if (!showTrack) return;
+
+    this.tryAddNativeModuleTrack(ctx);
+  }
+
+  /**
+   * Attempts to add NativeModule track to workspace hierarchy
+   * @remarks Positions track after JavaScript thread track when found
+   */
+  private tryAddNativeModuleTrack(ctx: Trace) {
+    const track = new TrackNode({
+      name: 'NativeModule',
+      uri: LYNX_NATIVE_MODULE_ID,
+      sortOrder: 20,
+    });
+    const workspace = ctx.currentWorkspace;
+    if (workspace.children.length > 0) {
+      for (const item of workspace.children) {
+        if (!isLynxBackgroundScriptThreadGroup(item)) {
+          continue;
+        }
+        const jsThreadTrackNode = getBackgroundScriptThreadTrackNode(item);
+        if (jsThreadTrackNode) {
+          item.addChildAfter(track, jsThreadTrackNode);
+          break;
+        }
+      }
+    }
+  }
+
+  /**
+   * Checks if trace contains valid NativeModule calls
+   * @param ctx - Trace context
+   * @returns True if valid bridge calls with flow IDs are found
+   */
+  private async containValidNativeModule(ctx: Trace) {
+    const queryRes = await ctx.engine.query(
+      `select arg_set_id as argSetId from slice where slice.name='CallJSB'`,
+    );
+    const it = queryRes.iter({
+      argSetId: NUM,
+    });
+    for (; it.valid(); it.next()) {
+      const args = await getArgs(ctx.engine, asArgSetId(it.argSetId));
+      const moduleName = getFirstStringArg(args, ['debug.module_name']);
+      const methodName = getFirstStringArg(args, ['debug.method_name']);
+      const flowId = getFirstStringArg(args, ['debug.flowId']);
+      if (moduleName === 'bridge' && methodName === 'call' && flowId !== '') {
+        return true;
+      }
+    }
+    return false;
+  }
+}

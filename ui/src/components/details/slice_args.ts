@@ -23,6 +23,8 @@ import {sqliteString} from '../../base/string_utils';
 import {SLICE_TABLE} from '../widgets/sql/table_definitions';
 import {sourceMapState} from '../../source_map/source_map_state';
 import {raf} from '../../core/raf_scheduler';
+import {stringToJsonObject} from '../../lynx_perf/string_utils';
+import {Icons} from '../../base/semantic_icons';
 
 // Renders slice arguments (key/value pairs) as a subtree.
 export function renderSliceArguments(trace: Trace, args: ArgsDict): m.Children {
@@ -81,19 +83,48 @@ export function renderSliceArguments(trace: Trace, args: ArgsDict): m.Children {
     },
     (key, value) => {
       if (key === 'args.originSource' && typeof value === 'string') {
-        return m(
-          Anchor,
-          {
-            icon: 'visibility',
-            onclick: () => {
-              openSourceFile(value);
-            },
-          },
-          value,
-        );
+        return renderSourceFile(value);
+      }
+      if (typeof value === 'string' && value !== '') {
+        const parsedJson = stringToJsonObject(value);
+        if (parsedJson !== undefined) {
+          const formattedJson = JSON.stringify(parsedJson, null, 2);
+          return m('div', [
+            m('pre', {style: {backgroundColor: 'transparent'}}, formattedJson),
+            m(MenuItem, {
+              icon: Icons.Copy,
+              label: '',
+              onclick: () => {
+                navigator.clipboard.writeText(formattedJson);
+              },
+            }),
+          ]);
+        }
       }
       return undefined;
     },
+  );
+}
+
+function renderSourceFile(value: string): m.Children {
+  if (
+    sourceMapState.state.sourceFileDrawerVisible &&
+    sourceMapState.state.currentSourceFile !== value
+  ) {
+    sourceMapState.edit((draft) => {
+      draft.currentSourceFile = value;
+    });
+    raf.scheduleFullRedraw();
+  }
+  return m(
+    Anchor,
+    {
+      icon: 'visibility',
+      onclick: () => {
+        openSourceFile(value);
+      },
+    },
+    value,
   );
 }
 
