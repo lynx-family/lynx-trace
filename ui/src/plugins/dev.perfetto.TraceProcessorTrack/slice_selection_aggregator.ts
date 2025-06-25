@@ -24,6 +24,7 @@ import {
 import {AreaSelection} from '../../public/selection';
 import {Trace} from '../../public/trace';
 import {Track} from '../../public/track';
+import {queryFrameRenderingAggregation} from '../../lynx_perf/frame/query_aggregation_frame';
 import {
   Dataset,
   DatasetSchema,
@@ -93,6 +94,11 @@ export class SliceSelectionAggregator implements Aggregator {
     return {
       prepareData: async (engine: Engine) => {
         const unionQueries: string[] = [];
+        const frameQuery = this.buildFrameQuery(area);
+        if (frameQuery !== undefined) {
+          unionQueries.push(frameQuery);
+        }
+
         await using trash = new AsyncDisposableStack();
         this.trackDatasetMap = new Map();
 
@@ -140,6 +146,35 @@ export class SliceSelectionAggregator implements Aggregator {
         return {tableName: this.id};
       },
     };
+  }
+
+  private buildFrameQuery(area: AreaSelection): string | undefined {
+    const rows = queryFrameRenderingAggregation(area);
+    if (rows.length === 0) {
+      return undefined;
+    }
+
+    const frameRows = rows.flatMap((row) =>
+      row.frameDurations.map((duration) => ({
+        name: row.name,
+        duration,
+      })),
+    );
+
+    return frameRows
+      .map(
+        (row, index) => `
+          SELECT
+            ${-(index + 1)} as id,
+            '${row.name}' as name,
+            0 as ts,
+            ${row.duration} as dur,
+            ${row.duration} as self_dur,
+            0 as __groupid,
+            NULL as __partition
+        `,
+      )
+      .join(' UNION ALL ');
   }
 
   private async buildSliceQuery(

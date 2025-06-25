@@ -105,4 +105,5 @@ export const defaultPlugins = [
   'lynx.Element',
   'lynx.VitalTimestamp',
   'lynx.NativeModule',
+  'lynx.FrameJank',
 ];

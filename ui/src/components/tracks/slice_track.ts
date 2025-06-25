@@ -58,6 +58,8 @@ import {formatDuration} from '../time_utils';
 import {BufferedBounds} from './buffered_bounds';
 import {CHUNKED_TASK_BACKGROUND_PRIORITY} from './feature_flags';
 import {SliceTrackDetailsPanel} from './slice_track_details_panel';
+import {renderDoFrameTag} from '../../lynx_perf/frame/render_doframe_mark';
+import {isMainThreadTrack} from '../../lynx_perf/track_utils';
 import {
   RECT_PATTERN_FADE_RIGHT,
   RowLayout,
@@ -68,6 +70,7 @@ import {cropText} from '../../base/string_utils';
 
 const SLICE_MIN_WIDTH_FOR_TEXT_PX = 5;
 const CHEVRON_WIDTH_PX = 10;
+const FRAME_TAG_RADIUS = 6;
 
 export const enum ColorVariant {
   BASE = 0,
@@ -419,6 +422,15 @@ export class SliceTrack<T extends RowSchema> implements TrackRenderer {
       scale: pxPerNs,
       offset: baseOffsetPx,
     };
+
+    if (this.isMainThreadTrack()) {
+      renderDoFrameTag(
+        ctx,
+        timescale,
+        this.sliceLayout.padding / 2 + FRAME_TAG_RADIUS,
+        FRAME_TAG_RADIUS,
+      );
+    }
 
     this.renderSlices(
       trackCtx,
@@ -1166,18 +1178,27 @@ export class SliceTrack<T extends RowSchema> implements TrackRenderer {
     const {padding, rowGap, sliceHeight, collapsed} = this.sliceLayout;
     const rowHeight = collapsed ? COLLAPSED_ROW_HEIGHT : sliceHeight;
     return {
-      paddingTop: padding,
+      paddingTop: padding + this.getFrameLayoutHeight(),
       firstRowHeight: sliceHeight,
       rowHeight,
       rowGap,
     };
   }
 
+  private isMainThreadTrack(): boolean {
+    return isMainThreadTrack(this.uri);
+  }
+
+  private getFrameLayoutHeight(): number {
+    return this.isMainThreadTrack() ? FRAME_TAG_RADIUS * 2 : 0;
+  }
+
   private updateSliceAndTrackHeight() {
     const layout = this.buildRowLayout();
-    const padding = layout.paddingTop ?? 0;
+    const padding = this.sliceLayout.padding;
+    const paddingTop = layout.paddingTop ?? 0;
     if (this.rowCount <= 0) {
-      this.computedTrackHeight = 2 * padding;
+      this.computedTrackHeight = paddingTop + padding;
       return;
     }
     // Row 0 height + remaining rows + gaps + padding on both sides
@@ -1226,7 +1247,7 @@ export class SliceTrack<T extends RowSchema> implements TrackRenderer {
     const baseOffsetPx = timescale.timeToPx(this.currentDataFrame.start);
 
     if (
-      y >= this.sliceLayout.padding &&
+      y >= (layout.paddingTop ?? 0) &&
       y <= trackHeight - this.sliceLayout.padding
     ) {
       // Check regular and incomplete slices
