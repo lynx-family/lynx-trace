@@ -602,6 +602,31 @@ class TrackEvent {
     return TrackEventInternal::GetClockId();
   }
 
+  // Determines if the given dynamic category is enabled, first by checking the
+  // per-trace writer cache or by falling back to computing it based on the
+  // trace config for the given session.
+  static bool IsDynamicCategoryEnabled(
+      TrackEventDataSource::TraceContext* ctx,
+      const DynamicCategory& dynamic_category) {
+    auto incr_state = ctx->GetIncrementalState();
+    auto it = incr_state->dynamic_categories.find(dynamic_category.name);
+    if (it == incr_state->dynamic_categories.end()) {
+      // We haven't seen this category before. Let's figure out if it's enabled.
+      // This requires grabbing a lock to read the session's trace config.
+      auto ds = ctx->GetDataSourceLocked();
+      if (!ds) {
+        return false;
+      }
+      Category category{Category::FromDynamicCategory(dynamic_category)};
+      bool enabled = TrackEventInternal::IsCategoryEnabled(
+          *Registry, ds->GetConfig(), category);
+      // TODO(skyostil): Cap the size of |dynamic_categories|.
+      incr_state->dynamic_categories[dynamic_category.name] = enabled;
+      return enabled;
+    }
+    return it->second;
+  }
+
  private:
   // The DecayStrType method is used to avoid unnecessary instantiations of
   // templates on string constants of different sizes. Without it, strings
@@ -1114,31 +1139,6 @@ class TrackEvent {
       TrackEventDataSource::TraceWithInstances<CategoryTracePointTraits>(
           instances, std::move(lambda), {CatTraits::GetStaticIndex(category)});
     }
-  }
-
-  // Determines if the given dynamic category is enabled, first by checking the
-  // per-trace writer cache or by falling back to computing it based on the
-  // trace config for the given session.
-  static bool IsDynamicCategoryEnabled(
-      TrackEventDataSource::TraceContext* ctx,
-      const DynamicCategory& dynamic_category) {
-    auto incr_state = ctx->GetIncrementalState();
-    auto it = incr_state->dynamic_categories.find(dynamic_category.name);
-    if (it == incr_state->dynamic_categories.end()) {
-      // We haven't seen this category before. Let's figure out if it's enabled.
-      // This requires grabbing a lock to read the session's trace config.
-      auto ds = ctx->GetDataSourceLocked();
-      if (!ds) {
-        return false;
-      }
-      Category category{Category::FromDynamicCategory(dynamic_category)};
-      bool enabled = TrackEventInternal::IsCategoryEnabled(
-          *Registry, ds->GetConfig(), category);
-      // TODO(skyostil): Cap the size of |dynamic_categories|.
-      incr_state->dynamic_categories[dynamic_category.name] = enabled;
-      return enabled;
-    }
-    return it->second;
   }
 
   // Config for the current tracing session.

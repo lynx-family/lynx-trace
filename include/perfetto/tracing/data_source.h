@@ -385,6 +385,8 @@ class DataSource : public DataSourceBase {
 
     uint32_t instance_index() const { return instance_index_; }
 
+    TraceWriterBase* getTraceWriter() { return tls_inst_->trace_writer.get(); }
+
    private:
     friend class DataSource;
     template <const internal::TrackEventCategoryRegistry*>
