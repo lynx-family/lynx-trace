@@ -27,6 +27,15 @@ import {stringToJsonObject} from '../../lynx_perf/string_utils';
 import {Icons} from '../../base/semantic_icons';
 import {lynxPerfGlobals} from '../../lynx_perf/lynx_perf_globals';
 
+export function canFocusLynxViewArgument(key: string, value: ArgValue): boolean {
+  return (
+    lynxPerfGlobals.state.lynxviewInstances.length > 0 &&
+    (key === 'debug.instance_id' || key === 'args.instance_id') &&
+    value != null &&
+    String(value).length > 0
+  );
+}
+
 // Renders slice arguments (key/value pairs) as a subtree.
 export function renderSliceArguments(trace: Trace, args: ArgsDict): m.Children {
   return renderArguments(
@@ -34,6 +43,7 @@ export function renderSliceArguments(trace: Trace, args: ArgsDict): m.Children {
     args,
     (key, value) => {
       const displayValue = value === null ? 'NULL' : String(value);
+      const canFocusLynxView = canFocusLynxViewArgument(key, value);
       const menuItems: m.Children[] = [
         m(MenuItem, {
           label: 'Find slices with same arg value',
@@ -61,20 +71,19 @@ export function renderSliceArguments(trace: Trace, args: ArgsDict): m.Children {
             });
           },
         }),
-        m(MenuItem, {
-          label: 'Visualize argument values',
-          icon: 'query_stats',
-          onclick: () => {
-            extensions.addVisualizedArgTracks(trace, key);
-          },
-        }),
       ];
-      if (
-        lynxPerfGlobals.state.lynxviewInstances.length > 0 &&
-        (key === 'debug.instance_id' || key === 'args.instance_id') &&
-        value != null &&
-        String(value).length > 0
-      ) {
+      if (!canFocusLynxView) {
+        menuItems.push(
+          m(MenuItem, {
+            label: 'Visualize argument values',
+            icon: 'query_stats',
+            onclick: () => {
+              extensions.addVisualizedArgTracks(trace, key);
+            },
+          }),
+        );
+      }
+      if (canFocusLynxView) {
         menuItems.push(
           m(MenuItem, {
             label: 'Focus LynxView',
