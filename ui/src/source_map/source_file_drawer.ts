@@ -20,6 +20,7 @@ import m from 'mithril';
 import {Editor} from '../widgets/editor';
 import {sourceMapState} from './source_map_state';
 import {raf} from '../core/raf_scheduler';
+import {eventLoggerState} from '../event_logger';
 
 function getFullScreenWidth() {
   const page = document.querySelector('.page') as HTMLElement;
@@ -103,6 +104,9 @@ export class SourceFileDrawer implements m.ClassComponent<{}> {
     let line = -1;
     let column = -1;
     if (sourceMapState.state.currentSourceFile) {
+      eventLoggerState.state.eventLogger.logEvent('lynx_feature_usage', {
+        type: 'SourceFile',
+      });
       const sourceFiles = sourceMapState.state.currentSourceFile.split(':');
       if (sourceFiles.length >= 3) {
         const file = sourceFiles.slice(0, sourceFiles.length - 2).join(':');

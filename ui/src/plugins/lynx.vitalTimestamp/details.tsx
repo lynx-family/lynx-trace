@@ -42,6 +42,7 @@ import {
   normalizeVitalTimestampName,
   validPipelineBeginStage,
 } from './details_helpers';
+import {eventLoggerState} from '../../event_logger';
 
 /**
  * Pipeline Stage Interface
@@ -224,8 +225,12 @@ export class VitalTimestampDetailsPanel implements TrackEventDetailsPanel {
       Number(this.sliceDetail?.ts),
     );
     this.loading = false;
+    eventLoggerState.state.eventLogger.logEvent('lynx_feature_usage', {
+      type: 'VitalTimestamp',
+    });
   }
 
+  /**
    * Adds chart event to visualization data
    * @param pid - Process/thread identifier
    * @param name - Event name
