@@ -41,6 +41,7 @@ import {
   getFirstStringArg,
 } from '../../lynx_perf/trace_utils';
 import {LynxElement} from '../../lynx_perf/common_components/element_tree/types';
+import {stringToJsonObject} from '../../lynx_perf/string_utils';
 
 /**
  * Lynx Element Performance Analysis Plugin
@@ -152,7 +153,10 @@ export default class LynxElementPlugin implements PerfettoPlugin {
       if (content === '') {
         continue;
       }
-      const rootElementAbbr = JSON.parse(content);
+      const rootElementAbbr = stringToJsonObject(content);
+      if (rootElementAbbr === undefined) {
+        continue;
+      }
       const rootElement = reConstructElementTree(rootElementAbbr, undefined);
       const issueElements = this.findIssueElements(rootElement, instanceId);
       if (issueElements.length > 0) {
