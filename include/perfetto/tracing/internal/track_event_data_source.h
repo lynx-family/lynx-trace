@@ -245,6 +245,8 @@ class PERFETTO_EXPORT_COMPONENT TrackEventDataSource
 
  public:
   static constexpr bool kRequiresCallbacksUnderLock = false;
+  constexpr static BufferExhaustedPolicy kBufferExhaustedPolicy =
+      BufferExhaustedPolicy::kStall;
 
   // DataSource implementation.
   void OnSetup(const DataSourceBase::SetupArgs& args) override {
