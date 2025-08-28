@@ -21,6 +21,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <string>
 
 #include "perfetto/base/status.h"
 #include "perfetto/protozero/proto_decoder.h"
@@ -94,8 +95,9 @@ class TrackEventTokenizer {
       const protos::pbzero::TrackEvent_Decoder&,
       const protos::pbzero::TrackEvent_LegacyEvent_Decoder&,
       PacketSequenceStateGeneration& state);
-  base::Status HandleExtraArgsValues(
-      const protos::pbzero::TrackEvent::Decoder&);
+  base::Status HandleExtraArgsValues(const protos::pbzero::TrackEvent::Decoder&,
+                                     PacketSequenceStateGeneration& state);
+  bool IsLynxUpdateRelatedEvent(const std::string& event_name);
 
   // Helper to record tokenization errors with packet offset
   void RecordTokenizationError(size_t stat_key, TraceBlobView* packet);

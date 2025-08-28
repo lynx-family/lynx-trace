@@ -904,6 +904,14 @@ class TrackEventEventImporter {
         context_->flow_tracker->Step(slice_id, flow_id);
       }
     }
+    if (!paint_end_flow_ids_.empty()) {
+      for (uint64_t flow_id : paint_end_flow_ids_) {
+        context_->flow_tracker->End(slice_id, flow_id,
+                                    /*close_flow=*/true,
+                                    /*ignore_closing_slice=*/true);
+      }
+      paint_end_flow_ids_.clear();
+    }
     if (event_.has_terminating_flow_ids_old() ||
         event_.has_terminating_flow_ids()) {
       auto it = event_.has_terminating_flow_ids()
@@ -1449,12 +1457,16 @@ class TrackEventEventImporter {
     NullTermStringView name = storage_->GetString(name_id_);
     bool is_timing_flag_event = false;
     bool is_load_template_event = false;
+    bool is_paint_end_event = false;
     bool has_instance_id_parameter = false;
     if (!name.empty() &&
         strcmp(name.c_str(), BindPipelineIDWithTimingFlag) == 0) {
       is_timing_flag_event = true;
     } else if (!name.empty() && strcmp(name.c_str(), LynxLoadTemplate) == 0) {
       is_load_template_event = true;
+    } else if (!name.empty() &&
+               strcmp(name.c_str(), "Timing::Mark.paintEnd") == 0) {
+      is_paint_end_event = true;
     }
 
     for (auto it = event_.debug_annotations(); it; ++it) {
@@ -1471,6 +1483,16 @@ class TrackEventEventImporter {
           auto debug_key =
               parser_->args_parser_.EnterDictionary("timing_flags");
           args_writer.AddString(debug_key.key(), *flags);
+        }
+      }
+      if (is_paint_end_event && debug_name == "pipeline_id" &&
+          annotation.has_string_value()) {
+        const std::string pipeline_id = annotation.string_value().ToStdString();
+        auto flow_ids = context_->storage->GetPipelineFlowIds(pipeline_id);
+        if (flow_ids && !flow_ids->empty()) {
+          paint_end_flow_ids_ = *flow_ids;
+          auto debug_key = parser_->args_parser_.EnterDictionary("flowId");
+          args_writer.AddUnsignedInteger(debug_key.key(), flow_ids->back());
         }
       }
 
@@ -1699,6 +1721,7 @@ class TrackEventEventImporter {
   std::optional<UniqueTid> legacy_passthrough_utid_;
 
   uint32_t packet_sequence_id_;
+  std::vector<uint64_t> paint_end_flow_ids_;
 };
 
 }  // namespace perfetto::trace_processor

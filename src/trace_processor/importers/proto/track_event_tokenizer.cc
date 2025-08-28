@@ -566,7 +566,7 @@ ModuleResult TrackEventTokenizer::TokenizeTrackEventPacket(
           seq_id, &data.trace_packet_data.packet)) {
     return ModuleResult::Handled();
   }
-  HandleExtraArgsValues(event);
+  HandleExtraArgsValues(event, *data.trace_packet_data.sequence_state);
 
   module_context_->track_event_stream->Push(timestamp, std::move(data));
   return ModuleResult::Handled();
@@ -693,11 +693,23 @@ base::Status TrackEventTokenizer::TokenizeLegacySampleEvent(
 // TODO(suguannan.906): This is not a reasonable implementation. We should
 // optimize this once a better solution is identified.
 base::Status TrackEventTokenizer::HandleExtraArgsValues(
-    const protos::pbzero::TrackEvent::Decoder& event) {
+    const protos::pbzero::TrackEvent::Decoder& event,
+    PacketSequenceStateGeneration& sequence_state) {
   std::string pipeline_id;
   std::string timing_flag;
   std::string instance_id;
   std::string url;
+  std::string event_name = event.name().ToStdString();
+
+  if (event_name.empty()) {
+    uint64_t name_iid = event.name_iid();
+    auto* decoder = sequence_state.LookupInternedMessage<
+        protos::pbzero::InternedData::kEventNamesFieldNumber,
+        protos::pbzero::EventName>(name_iid);
+    if (decoder) {
+      event_name = decoder->name().ToStdString();
+    }
+  }
   for (auto it = event.debug_annotations(); it; ++it) {
     protos::pbzero::DebugAnnotation::Decoder annotation(*it);
     if (!annotation.has_name()) {
@@ -724,8 +736,7 @@ base::Status TrackEventTokenizer::HandleExtraArgsValues(
       pipeline_id.clear();
       timing_flag.clear();
     }
-    if (!pipeline_id.empty() &&
-        event.name().ToStdString() == "Timing::Mark.loadBundleStart") {
+    if (!pipeline_id.empty() && event_name == "Timing::Mark.loadBundleStart") {
       context_->storage->AddPipelineFlag(pipeline_id, "Lynx FCP");
       pipeline_id.clear();
     }
@@ -734,8 +745,25 @@ base::Status TrackEventTokenizer::HandleExtraArgsValues(
       instance_id.clear();
       url.clear();
     }
+    if (IsLynxUpdateRelatedEvent(event_name) && !pipeline_id.empty() &&
+        event.has_flow_ids()) {
+      std::vector<uint64_t> flow_ids;
+      for (auto flow_it = event.flow_ids(); flow_it; ++flow_it) {
+        flow_ids.push_back(static_cast<uint64_t>(*flow_it));
+      }
+      context_->storage->SetPipelineFlowIds(pipeline_id, flow_ids);
+    }
   }
   return base::OkStatus();
+}
+
+bool TrackEventTokenizer::IsLynxUpdateRelatedEvent(
+    const std::string& event_name) {
+  return event_name == "TemplateAssembler::CallLepusMethod" ||
+         event_name == "FiberFlushElementTreeEnd" ||
+         event_name == "LynxUpdateData" ||
+         event_name == "UpdateComponentData" ||
+         event_name == "LynxLoadTemplate";
 }
 
 void TrackEventTokenizer::RecordTokenizationError(size_t stat_key,
