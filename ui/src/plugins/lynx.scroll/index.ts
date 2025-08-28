@@ -36,9 +36,12 @@ import {getArgs} from '../../components/sql_utils/args';
 import {asArgSetId} from '../../components/sql_utils/core_types';
 import {ThreadSortOrder} from '../../lynx_perf/thread_order';
 import {getFirstStringArg} from '../../lynx_perf/trace_utils';
+import VitalTimestampPlugin from '../lynx.vitalTimestamp';
 
 export default class LynxScroll implements PerfettoPlugin {
   static readonly id = LYNX_SCROLL_PLUGIN_ID;
+
+  static readonly dependencies = [VitalTimestampPlugin];
 
   async onTraceLoad(ctx: Trace): Promise<void> {
     const showTrack = await this.containValidScollSection(ctx);
