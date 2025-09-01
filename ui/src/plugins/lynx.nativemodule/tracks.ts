@@ -71,6 +71,11 @@ export class LynxNativeModuleTrack extends LynxBaseTrack<NativeModuleItem[]> {
   protected maxSliceDepth = 0;
   private charWidth = -1;
   private colorSchema = UNEXPECTED_PINK;
+  /**
+   * To enable the flow_manager to automatically query flow connection information for the selected trace events,
+   * the rootTableName is proactively set to "slice".
+   */
+  readonly rootTableName = 'slice';
 
   /**
    * Calculates track height based on slice depth
@@ -316,13 +321,19 @@ export class LynxNativeModuleTrack extends LynxBaseTrack<NativeModuleItem[]> {
       yPx: 0,
       durPx: 0,
     };
+    const pxEnd = ctx.size.width;
     for (let i = 0; i < data.length; i++) {
       const slice = data[i];
       const selected = selectedId === slice.id;
       const posX = Time.fromRaw(BigInt(slice.ts));
-      const xPx = ctx.timescale.timeToPx(posX);
       const durW = Duration.fromRaw(BigInt(slice.dur ?? 0));
-      const xDur = ctx.timescale.durationToPx(durW);
+      const timePx = ctx.timescale.timeToPx(posX);
+      // The start of slice may be out of the visible window
+      const xPx = Math.max(timePx, 0);
+      const durPx =
+        ctx.timescale.durationToPx(durW) + (timePx < 0 ? timePx : 0);
+      // Only show the visible part of the slice
+      const xDur = Math.min(durPx, pxEnd - xPx);
       this.colorSchema = getColorForSlice(slice.name);
 
       // Pass 1: fill slices by color
