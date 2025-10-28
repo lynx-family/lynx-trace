@@ -912,6 +912,12 @@ class TrackEventEventImporter {
       }
       paint_end_flow_ids_.clear();
     }
+    if (!platform_measure_layout_draw_flow_ids_.empty()) {
+      for (uint64_t flow_id : platform_measure_layout_draw_flow_ids_) {
+        context_->flow_tracker->Step(slice_id, flow_id);
+      }
+      platform_measure_layout_draw_flow_ids_.clear();
+    }
     if (event_.has_terminating_flow_ids_old() ||
         event_.has_terminating_flow_ids()) {
       auto it = event_.has_terminating_flow_ids()
@@ -1458,6 +1464,7 @@ class TrackEventEventImporter {
     bool is_timing_flag_event = false;
     bool is_load_template_event = false;
     bool is_paint_end_event = false;
+    bool is_android_platform_measure_layout_draw_event = false;
     bool has_instance_id_parameter = false;
     if (!name.empty() &&
         strcmp(name.c_str(), BindPipelineIDWithTimingFlag) == 0) {
@@ -1467,6 +1474,11 @@ class TrackEventEventImporter {
     } else if (!name.empty() &&
                strcmp(name.c_str(), "Timing::Mark.paintEnd") == 0) {
       is_paint_end_event = true;
+    } else if (!name.empty() &&
+               (strcmp(name.c_str(), "LynxView.onMeasure") == 0 ||
+                strcmp(name.c_str(), "LynxView.onLayout") == 0 ||
+                strcmp(name.c_str(), "LynxView.onDraw") == 0)) {
+      is_android_platform_measure_layout_draw_event = true;
     }
 
     for (auto it = event_.debug_annotations(); it; ++it) {
@@ -1493,6 +1505,26 @@ class TrackEventEventImporter {
           paint_end_flow_ids_ = *flow_ids;
           auto debug_key = parser_->args_parser_.EnterDictionary("flowId");
           args_writer.AddUnsignedInteger(debug_key.key(), flow_ids->back());
+        }
+      }
+      if (is_android_platform_measure_layout_draw_event &&
+          debug_name == "pipeline_ids" && annotation.has_string_value()) {
+        const std::string pipeline_ids =
+            annotation.string_value().ToStdString();
+        for (const std::string& pipeline_id :
+             base::SplitString(pipeline_ids, ",")) {
+          auto flow_ids = context_->storage->GetPipelineFlowIds(pipeline_id);
+          if (!flow_ids || flow_ids->empty()) {
+            continue;
+          }
+          platform_measure_layout_draw_flow_ids_.insert(
+              platform_measure_layout_draw_flow_ids_.end(), flow_ids->begin(),
+              flow_ids->end());
+        }
+        if (!platform_measure_layout_draw_flow_ids_.empty()) {
+          auto debug_key = parser_->args_parser_.EnterDictionary("flowId");
+          args_writer.AddUnsignedInteger(
+              debug_key.key(), platform_measure_layout_draw_flow_ids_.back());
         }
       }
 
@@ -1722,6 +1754,7 @@ class TrackEventEventImporter {
 
   uint32_t packet_sequence_id_;
   std::vector<uint64_t> paint_end_flow_ids_;
+  std::vector<uint64_t> platform_measure_layout_draw_flow_ids_;
 };
 
 }  // namespace perfetto::trace_processor
