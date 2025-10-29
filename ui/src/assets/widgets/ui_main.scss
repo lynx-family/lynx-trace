@@ -16,13 +16,13 @@
   isolation: isolate;
   display: grid;
   grid-template-areas:
-    "sidebar topbar"
-    "sidebar loading"
-    "sidebar alerts"
-    "sidebar page"
-    "statusbar statusbar";
+    "sidebar topbar right-sidebar"
+    "sidebar loading right-sidebar"
+    "sidebar alerts right-sidebar"
+    "sidebar page right-sidebar"
+    "statusbar statusbar statusbar";
   grid-template-rows: auto auto auto 1fr auto;
-  grid-template-columns: auto 1fr;
+  grid-template-columns: auto 1fr var(--right-sidebar-width);
   overflow: hidden;
   width: 100%;
   height: 100%;

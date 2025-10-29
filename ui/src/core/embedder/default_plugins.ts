@@ -108,4 +108,5 @@ export const defaultPlugins = [
   'lynx.FrameJank',
   'lynx.ScrollDetect',
   'lynx.FocusMode',
+  'lynx.AIAnalysis',
 ];

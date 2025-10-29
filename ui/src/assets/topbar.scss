@@ -45,6 +45,69 @@
     font-size: var(--pf-font-size-m);
     font-family: var(--pf-font-compact);
   }
+
+  .lynx-assistant,
+  .lynx-menu,
+  .lynx-overflow-menu {
+    position: absolute;
+    display: flex;
+    align-items: center;
+  }
+
+  &--screen-large {
+    .pf-omnibox {
+      width: calc(100% - 400px);
+      max-width: 600px;
+      min-width: 300px;
+    }
+
+    .lynx-assistant {
+      right: 150px;
+    }
+
+    .lynx-menu {
+      right: 20px;
+    }
+  }
+
+  &--screen-medium {
+    .pf-omnibox {
+      width: calc(100% - 200px);
+      max-width: 600px;
+      min-width: 300px;
+    }
+
+    .lynx-assistant {
+      right: 60px;
+    }
+
+    .lynx-menu {
+      right: 20px;
+    }
+  }
+
+  &--screen-small {
+    .pf-omnibox {
+      width: calc(100% - 80px);
+      max-width: 100px;
+      min-width: 0;
+    }
+
+    .lynx-overflow-menu {
+      right: 20px;
+    }
+
+    .lynx-assistant,
+    .lynx-menu {
+      display: none;
+    }
+  }
+
+  &--hide-right-sidebar {
+    .pf-omnibox--query-mode {
+      padding-right: 48px;
+    }
+  }
 }
 
 .pf-omnibox {
@@ -229,15 +292,11 @@
   }
 }
 
-.lynx-menu {
-  position: absolute;
-  right: 40px;
-  display: flex;
-  align-items: center;
-}
-
-.hide-right-sidebar {
-  .query-mode {
-    padding-right: 48px;
+// Responsive adjustments for very small screens
+@media (max-width: 480px) {
+  .pf-topbar--screen-small {
+    .pf-omnibox {
+      min-width: 250px;
+    }
   }
 }

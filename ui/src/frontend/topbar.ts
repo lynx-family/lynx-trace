@@ -26,6 +26,10 @@ import {Omnibox} from './omnibox';
 import {HIDE_ERROR_ICON_ON_TOPBAR_FLAG} from '../lynx_features_flags';
 import {sourceMapState} from '../source_map/source_map_state';
 import {lynxPerfGlobals} from '../lynx_perf/lynx_perf_globals';
+import {
+  renderLynxButtons,
+  getScreenSize,
+} from '../components/lynx_perf/top_bar';
 
 class TraceErrorIcon implements m.ClassComponent<TraceImplAttrs> {
   private tracePopupErrorDismissed = false;
@@ -80,25 +84,35 @@ export interface TopbarAttrs {
 }
 
 export class Topbar implements m.ClassComponent<TopbarAttrs> {
+  private resizeHandler = () => {
+    m.redraw();
+  };
+
+  oncreate() {
+    window.addEventListener('resize', this.resizeHandler);
+  }
+
+  onremove() {
+    window.removeEventListener('resize', this.resizeHandler);
+  }
+
   view({attrs}: m.Vnode<TopbarAttrs>) {
     const {trace} = attrs;
+    const screenSize = getScreenSize();
+
     return m(
       '.pf-topbar',
       {
         className: classNames(
           !AppImpl.instance.sidebar.visible && 'pf-topbar--hide-sidebar',
+          `pf-topbar--screen-${screenSize}`,
+          !lynxPerfGlobals.state.showRightSidebar &&
+            'pf-topbar--hide-right-sidebar',
         ),
       },
       m(Omnibox, {trace}),
       sourceMapState.state.sourceMapDecodePopup?.render(),
-      lynxPerfGlobals.state.lynxviewInstances.length > 0 &&
-        m(Button, {
-          className: 'lynx-menu',
-          label: 'Focus LynxView',
-          icon: 'center_focus_strong',
-          intent: Intent.Primary,
-          onclick: () => lynxPerfGlobals.toggleRightSidebar(),
-        }),
+      renderLynxButtons(),
       trace && m(TraceErrorIcon, {trace}),
     );
   }

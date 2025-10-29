@@ -155,14 +155,14 @@ function defBundle(tsRoot, bundle, distDir, needGzip = false) {
         strictRequires: true,
       }),
 
-      json(),
-
       babel({
         babelHelpers: 'bundled',
         exclude: 'node_modules/**',
         presets: ['@babel/preset-react'],
         extensions: ['.ts', '.tsx'],
       }),
+
+      json(),
 
       replace({
         patterns: [
