@@ -55,6 +55,19 @@ export class SettingsButton extends Component<
     });
   };
 
+  resetSettings = () => {
+    this.setState({
+      llmConfig: {
+        baseUrl: '',
+        apiKey: '',
+        modelName: '',
+        modelProvider: '',
+        customPrompt: '',
+      },
+    });
+    message.success('Reset Settings Successfully');
+  };
+
   hideSettings = () => {
     this.setState({showSettingsModal: false});
   };
@@ -109,7 +122,18 @@ export class SettingsButton extends Component<
           onCancel={this.hideSettings}
           width={600}
           okText="Save"
-          cancelText="Cancel">
+          cancelText="Cancel"
+          footer={[
+            <Button key="reset" onClick={this.resetSettings}>
+              Reset
+            </Button>,
+            <Button key="cancel" onClick={this.hideSettings}>
+              Cancel
+            </Button>,
+            <Button key="save" type="primary" onClick={this.saveSettings}>
+              Save
+            </Button>,
+          ]}>
           <Form layout="vertical" style={{marginTop: '16px'}}>
             <Form.Item label="Model Provider">
               <Select
