@@ -1528,7 +1528,7 @@ class TrackEventEventImporter {
         }
       }
 
-      if (is_load_template_event ||
+      if (name.empty() || is_load_template_event ||
           (debug_name != "instance_id" && debug_name != "instance_id_")) {
         continue;
       }
