@@ -84,6 +84,7 @@ DEPS_ALLOWLIST = [
         '/base/*',
         '/trace_processor/*',
         '/widgets/*',
+        'chart.js/auto',
     ]),
 
     # /components can depend on the 'base' packages & public

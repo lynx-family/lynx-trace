@@ -39,6 +39,7 @@ import {
   counterValueExpression,
 } from '../../components/tracks/counter_track';
 import {assertUnreachable} from '../../base/assert';
+import MemoryDashboard from '../../lynx_perf/common_components/memory/memory_details_section';
 
 interface CounterDetails {
   // The "left" timestamp of the counter sample T(N)
@@ -140,6 +141,22 @@ export class CounterDetailsPanel implements TrackEventDetailsPanel {
     }
   }
 
+  private isMemoryTrack(): boolean {
+    return this.trackName.startsWith('memory_');
+  }
+
+  private renderMemoryDashboard(counterInfo: CounterDetails) {
+    if (!this.isMemoryTrack() || !counterInfo.args) {
+      return null;
+    }
+
+    return m(
+      Section,
+      {title: 'Memory Dashboard'},
+      m(MemoryDashboard, {data: counterInfo.args}),
+    );
+  }
+
   render() {
     const counterInfo = this.counterDetails;
     if (counterInfo) {
@@ -150,6 +167,8 @@ export class CounterDetailsPanel implements TrackEventDetailsPanel {
           {title: 'Arguments'},
           m(Tree, renderArguments(this.trace, counterInfo.args)),
         );
+
+      const memoryDashboard = this.renderMemoryDashboard(counterInfo);
 
       return m(
         DetailsShell,
@@ -176,7 +195,7 @@ export class CounterDetailsPanel implements TrackEventDetailsPanel {
               }),
             ),
           ),
-          args,
+          memoryDashboard ?? args,
         ),
       );
     } else {
