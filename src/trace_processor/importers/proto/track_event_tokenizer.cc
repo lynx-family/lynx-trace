@@ -736,7 +736,9 @@ base::Status TrackEventTokenizer::HandleExtraArgsValues(
       pipeline_id.clear();
       timing_flag.clear();
     }
-    if (!pipeline_id.empty() && event_name == "Timing::Mark.loadBundleStart") {
+    if (!pipeline_id.empty() &&
+        (event_name == "Timing::Mark.loadBundleStart" ||
+         event_name == "Timing::Mark.setup_load_template_start")) {
       context_->storage->AddPipelineFlag(pipeline_id, "Lynx FCP");
       pipeline_id.clear();
     }
