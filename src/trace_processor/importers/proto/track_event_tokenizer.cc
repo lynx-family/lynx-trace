@@ -644,12 +644,14 @@ base::Status TrackEventTokenizer::HandleExtraArgsValues(
         timing_flag = "";
       }
       if (!pipeline_id.empty() &&
-          event_name == "Timing::Mark.loadBundleStart") {
+          (event_name == "Timing::Mark.loadBundleStart" ||
+           event_name == "Timing::Mark.setup_load_template_start")) {
         context_->storage->AddPipelineFlag(pipeline_id, "Lynx FCP");
         pipeline_id = "";
       }
 
-      if (!instance_id.empty() && !url.empty() && event_name == "LynxLoadTemplate") {
+      if (!instance_id.empty() && !url.empty() &&
+          event_name == "LynxLoadTemplate") {
         context_->storage->SetInstanceUrl(instance_id, url);
         instance_id = "";
         url = "";
