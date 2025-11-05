@@ -128,7 +128,7 @@ export class VitalTimestampDetailsPanel implements TrackEventDetailsPanel {
       slice.arg_set_id as argSetId,
       args.key as key,
       args.string_value as stringValue,
-      (IFNULL(thread.name, "Thread")) as threadName
+      (IFNULL(thread.name, "Thread") || ' ' || thread.tid) as threadName
       from slice 
       inner join args on args.arg_set_id = slice.arg_set_id
       left join thread_track on thread_track.id = slice.track_id
