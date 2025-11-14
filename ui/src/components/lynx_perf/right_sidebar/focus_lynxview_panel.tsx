@@ -165,9 +165,14 @@ export class FocusLynxViewDetailPanel extends Component<{}, State> {
             onChange={this.handleChange}
             style={{width: '100%'}}
             defaultValue={this.state.value}
-            filterOption={(input, option) =>
-              (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
-            }
+            filterOption={(input, option) => {
+              const url = option?.label ?? '';
+              const instanceId = option?.value ?? '';
+              if (isFinite(Number(input))) {
+                return instanceId.startsWith(input);
+              }
+              return url.toLowerCase().includes(input.toLowerCase());
+            }}
             options={this.state.option}
             value={this.state.value}
             optionLabelProp="value"
