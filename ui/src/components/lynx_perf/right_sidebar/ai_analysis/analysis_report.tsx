@@ -120,14 +120,20 @@ export class AnalysisReportComponent extends Component<AnalysisReportProps> {
                     {children}
                   </h3>
                 ),
-                a: ({ href, children }: any) => (
-                  <a
-                    href={href}
-                    style={{ color: '#1890ff', textDecoration: 'underline' }}
-                  >
-                    {children}
-                  </a>
-                ),
+                a: ({ href, children }: any) => {
+                  const hasSliceId = href && this.getSliceIdFromUrl(href) !== null;
+                  
+                  return (
+                    <a
+                      href={href}
+                      style={{ color: '#1890ff', textDecoration: 'underline' }}
+                      target={hasSliceId ? undefined : '_blank'}
+                      rel={hasSliceId ? undefined : 'noopener noreferrer'}
+                    >
+                      {children}
+                    </a>
+                  );
+                },
               }}
             >
               {analysisResult}
