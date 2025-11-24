@@ -147,13 +147,19 @@ export class AnalysisReportComponent extends Component<AnalysisReportProps> {
                     {children}
                   </h3>
                 ),
-                a: ({href, children}: MarkdownLinkProps) => (
-                  <a
-                    href={href}
-                    style={{color: '#1890ff', textDecoration: 'underline'}}>
-                    {children}
-                  </a>
-                ),
+                a: ({href, children}: MarkdownLinkProps) => {
+                  const hasSliceId =
+                    href !== undefined && this.getSliceIdFromUrl(href) !== null;
+                  return (
+                    <a
+                      href={href}
+                      style={{color: '#1890ff', textDecoration: 'underline'}}
+                      target={hasSliceId ? undefined : '_blank'}
+                      rel={hasSliceId ? undefined : 'noopener noreferrer'}>
+                      {children}
+                    </a>
+                  );
+                },
               }}>
               {analysisResult}
             </ReactMarkdown>
