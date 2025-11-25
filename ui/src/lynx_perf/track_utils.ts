@@ -16,20 +16,23 @@
 // Licensed under the Apache License Version 2.0 that can be found in the
 // LICENSE file in the root directory of this source tree.
 
+import {Trace} from '../public/trace';
 import {AppImpl} from '../core/app_impl';
 import {TrackNode} from '../public/workspace';
 import {
   LYNX_ISSUES_PLUGIN_ID,
   LYNX_BACKGROUND_THREAD_NAME,
   LYNX_VITAL_TIMESTAMP_PLUGIN_ID,
+  BACKGROUND_TRACE_EVENTS,
 } from './constants';
 import {lynxPerfGlobals} from './lynx_perf_globals';
+import {NUM} from '../trace_processor/query_result';
 
 export function isLynxBackgroundScriptThreadGroup(item: TrackNode) {
   return (
     item.hasChildren &&
     item.children.some((item) =>
-      item.title.includes(LYNX_BACKGROUND_THREAD_NAME),
+      item.title.toLocaleLowerCase().includes('lynx'),
     )
   );
 }
@@ -57,9 +60,10 @@ export function customTopTrack(currentTrack: TrackNode) {
   );
 }
 
-export function getBackgroundScriptThreadTrackNode(
+export async function getBackgroundScriptThreadTrackNode(
   item: TrackNode,
-): TrackNode | undefined {
+  ctx: Trace,
+): Promise<TrackNode | undefined> {
   if (item.hasChildren) {
     for (let i = item.children.length - 1; i >= 0; i--) {
       const trackNode = item.children[i];
@@ -67,7 +71,27 @@ export function getBackgroundScriptThreadTrackNode(
         return trackNode;
       }
     }
+    // Find the track which contains the NativeModule call
+    const backgroundTraceEventsStr = BACKGROUND_TRACE_EVENTS.map(
+      (item) => `'${item}'`,
+    ).join(',');
+    const nativeModuleTrackIdQuery = await ctx.engine.query(
+      `select slice.track_id from slice where slice.name in (${backgroundTraceEventsStr})`,
+    );
+    const iterResult = nativeModuleTrackIdQuery.iter({track_id: NUM});
+    if (iterResult.valid()) {
+      const nativeModuleTrackId = iterResult.track_id.toString();
+      for (let i = item.children.length - 1; i >= 0; i--) {
+        const trackNode = item.children[i];
+        const uriParts = trackNode.uri?.split('_');
+        const lastPart = uriParts ? uriParts[uriParts.length - 1] : null;
+        if (lastPart === nativeModuleTrackId) {
+          return trackNode;
+        }
+      }
+    }
   }
+
   return undefined;
 }
 
