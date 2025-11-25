@@ -70,14 +70,14 @@ export default class LynxNativeModule implements PerfettoPlugin {
     const showTrack = await this.containValidNativeModule(ctx);
     if (!showTrack) return;
 
-    this.tryAddNativeModuleTrack(ctx);
+    await this.tryAddNativeModuleTrack(ctx);
   }
 
   /**
    * Attempts to add NativeModule track to workspace hierarchy
    * @remarks Positions track after JavaScript thread track when found
    */
-  private tryAddNativeModuleTrack(ctx: Trace) {
+  private async tryAddNativeModuleTrack(ctx: Trace) {
     const track = new TrackNode({
       name: 'NativeModule',
       uri: LYNX_NATIVE_MODULE_ID,
@@ -89,7 +89,10 @@ export default class LynxNativeModule implements PerfettoPlugin {
         if (!isLynxBackgroundScriptThreadGroup(item)) {
           continue;
         }
-        const jsThreadTrackNode = getBackgroundScriptThreadTrackNode(item);
+        const jsThreadTrackNode = await getBackgroundScriptThreadTrackNode(
+          item,
+          ctx,
+        );
         if (jsThreadTrackNode) {
           item.addChildAfter(track, jsThreadTrackNode);
           break;
