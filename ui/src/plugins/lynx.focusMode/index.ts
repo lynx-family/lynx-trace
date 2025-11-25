@@ -283,7 +283,10 @@ export default class FocusMode implements PerfettoPlugin {
               break;
             }
           }
-          const backgroundThreadNode = getBackgroundScriptThreadTrackNode(item);
+          const backgroundThreadNode = await getBackgroundScriptThreadTrackNode(
+            item,
+            trace,
+          );
           if (exists && backgroundThreadNode) {
             item.addChildAfter(trackNode, backgroundThreadNode);
             firstTrackNode = trackNode;

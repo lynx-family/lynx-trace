@@ -262,14 +262,16 @@ export class VitalTimestampDetailsPanel implements TrackEventDetailsPanel {
     if (timestamp.name.endsWith(TIMING_START)) {
       return vitalTimestamps.find(
         (stamp) =>
-          stamp.name === timestamp.name.replace(TIMING_START, TIMING_END),
+          stamp.name === timestamp.name.replace(TIMING_START, TIMING_END) &&
+          stamp.threadName === timestamp.threadName,
       );
     }
     if (timestamp.name.endsWith(FRAMEWORK_TIMING_START)) {
       return vitalTimestamps.find(
         (stamp) =>
           stamp.name ===
-          timestamp.name.replace(FRAMEWORK_TIMING_START, FRAMEWORK_TIMING_END),
+          timestamp.name.replace(FRAMEWORK_TIMING_START, FRAMEWORK_TIMING_END) &&
+          stamp.threadName === timestamp.threadName,
       );
     }
     return undefined;
