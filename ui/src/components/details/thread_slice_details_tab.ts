@@ -283,9 +283,10 @@ export class ThreadSliceDetailsPanel implements TrackEventDetailsPanel {
         m(Tree, renderArguments(trace, slice.args)),
       );
     const description = this.renderDescription();
+    const screenshot = this.renderScreenshot();
     // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
-    if (description ?? precFlows ?? followingFlows ?? args) {
-      return m(GridLayoutColumn, args, description, precFlows, followingFlows);
+    if (description ?? precFlows ?? followingFlows ?? args ?? screenshot) {
+      return m(GridLayoutColumn, screenshot ?? args, description, precFlows, followingFlows);
     } else {
       return undefined;
     }
@@ -472,6 +473,39 @@ export class ThreadSliceDetailsPanel implements TrackEventDetailsPanel {
         {title: 'Description'},
         m(DescriptionSection, {description}),
       );
+    }
+    return undefined;
+  }
+
+  private renderScreenshot() {
+    if (this.sliceDetails?.name === "screenshot" && this.sliceDetails?.args) {
+      let data: string = '';
+      let instanceId: string = '';
+      this.sliceDetails.args.forEach((arg) => {
+        if (arg.key === 'debug.data' || arg.key === 'args.data' ) {
+          data = arg.displayValue;
+          data = data.replace(/\s+/g, '');
+        } else if (arg.key === 'debug.instance_id' || arg.key === 'args.data') {
+          instanceId = arg.displayValue;
+        }
+      });
+      const strictBase64Regex = /^data:image\/(png|jpeg|jpg|gif|webp|bmp|svg\+xml);base64,[A-Za-z0-9+/]*={0,2}$/;
+      if (data && strictBase64Regex.test(data)) {
+        return m(
+          Section,
+          {title: `Screenshot ${instanceId ? `instance_id: ${instanceId}`: ''}`},
+          m('img', {
+            src: data,
+            style: {
+              width: '100%',
+              height: 'auto',
+              maxHeight: '50vh',
+              objectFit: 'contain',
+              display: 'block',
+            },
+          }),
+        );
+      }
     }
     return undefined;
   }
