@@ -43,8 +43,8 @@ default_targets = [
 # Arguments for the GN output directory (unless overridden from the command
 # line).
 gn_args = ' '.join([
-    'enable_perfetto_ipc=true',
-    'enable_perfetto_zlib=false',
+    'enable_perfetto_ipc=false',
+    'enable_perfetto_zlib=true',
     'is_debug=false',
     'is_perfetto_build_generator=true',
     'is_perfetto_embedder=true',
