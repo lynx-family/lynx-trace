@@ -347,6 +347,7 @@ export class ThreadSliceDetailsPanel implements TrackEventDetailsPanel {
     const precFlows = this.renderPrecedingFlows(slice);
     const followingFlows = this.renderFollowingFlows(slice);
     const description = this.renderDescription();
+    const screenshot = this.renderScreenshot();
     if (
       sourceMapState.state.currentSourceFile !== undefined &&
       slice.category !== 'jsprofile' &&
@@ -369,11 +370,12 @@ export class ThreadSliceDetailsPanel implements TrackEventDetailsPanel {
       followingFlows !== undefined ||
       args !== undefined ||
       description !== undefined ||
+      screenshot !== undefined ||
       additionalSections !== undefined
     ) {
       return m(
         GridLayoutColumn,
-        args,
+        screenshot ?? args,
         description,
         precFlows,
         followingFlows,
@@ -674,6 +676,42 @@ export class ThreadSliceDetailsPanel implements TrackEventDetailsPanel {
         {title: 'Description'},
         m(DescriptionSection, {description}),
       );
+    }
+    return undefined;
+  }
+
+  private renderScreenshot() {
+    if (this.sliceDetails?.name === 'screenshot' && this.sliceDetails.args) {
+      const data = getFirstArgString(this.sliceDetails.args, [
+        'debug.data',
+        'args.data',
+      ]).replace(/\s+/g, '');
+      const instanceId = getFirstArgString(this.sliceDetails.args, [
+        'debug.instance_id',
+        'args.instance_id',
+      ]);
+      const strictBase64Regex =
+        /^data:image\/(png|jpeg|jpg|gif|webp|bmp|svg\+xml);base64,[A-Za-z0-9+/]*={0,2}$/;
+      if (data && strictBase64Regex.test(data)) {
+        return m(
+          Section,
+          {
+            title: `Screenshot ${
+              instanceId ? `instance_id: ${instanceId}` : ''
+            }`,
+          },
+          m('img', {
+            src: data,
+            style: {
+              width: '100%',
+              height: 'auto',
+              maxHeight: '50vh',
+              objectFit: 'contain',
+              display: 'block',
+            },
+          }),
+        );
+      }
     }
     return undefined;
   }
