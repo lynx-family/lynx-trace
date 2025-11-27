@@ -20,6 +20,7 @@ import {NUM, NUM_NULL} from '../trace_processor/query_result';
 import {Engine} from '../trace_processor/engine';
 import {BaseSlice} from './types';
 import {Flow} from '../core/flow_types';
+import {LYNX_VIEW_PLATFORM_RENDERING_METHOD} from './constants';
 
 export async function findPrecedingIdenticalFlowIdSlice(
   engine: Engine,
@@ -144,29 +145,59 @@ export async function filterUncessaryPipleineFlow(
     return;
   }
   // find all the proceding flow for the above filterTraceIdList
-  const filterProcedingFlow: ProcedingFlow[] = [];
   for (const id of filterTraceIdList) {
-    filterProcedingFlow.push(...(await queryProcedingFlows(engine, id)));
-  }
+    const filterProcedingFlow = await queryProcedingFlows(engine, id);
 
-  // remove the item in flow which satisfies the following condition:
-  // [item.begin.sliceid, item.end.sliceId] is in filterProcedingFlow
-  for (let i = flow.length - 1; i >= 0; i--) {
-    const item = flow[i];
-    if (
-      filterProcedingFlow.some(
-        (f) =>
-          f.beginSliceId === item.begin.sliceId &&
-          f.endSliceId === item.end.sliceId,
-      )
-    ) {
-      flow.splice(i, 1);
+    // remove the item in flow which satisfies the following condition:
+    // [item.begin.sliceid, item.end.sliceId] is in filterProcedingFlow
+    for (let i = flow.length - 1; i >= 0; i--) {
+      const item = flow[i];
+      // Special case handling: If the current rendering method is LynxView platform layer, and the
+      // number of pipelineIds is no more than 1, it indicates that there was no selection of multiple
+      // pipelines prior to this point, and the process of removing the flow should be skipped.
+      if (
+        LYNX_VIEW_PLATFORM_RENDERING_METHOD.includes(item.begin.sliceName) &&
+        (!item.begin.pipelineIds || item.begin.pipelineIds.length <= 1)
+      ) {
+        break;
+      }
+      if (
+        LYNX_VIEW_PLATFORM_RENDERING_METHOD.includes(item.end.sliceName) &&
+        (!item.end.pipelineIds || item.end.pipelineIds.length <= 1)
+      ) {
+        break;
+      }
+      if (
+        filterProcedingFlow.some(
+          (f) =>
+            f.beginSliceId === item.begin.sliceId &&
+            f.endSliceId === item.end.sliceId,
+        )
+      ) {
+        flow.splice(i, 1);
+      }
     }
   }
 
   // remove the flow which has the pipelineId in filterPipelineIds
   for (let i = flow.length - 1; i >= 0; i--) {
-    if (flowNeedsToFilter.includes(flow[i])) {
+    const item = flow[i];
+    // Special case handling: If the current rendering method is LynxView platform layer, and the
+    // number of pipelineIds is no more than 1, it indicates that there was no selection of multiple
+    // pipelines prior to this point, and the process of removing the flow should be skipped.
+    if (
+      LYNX_VIEW_PLATFORM_RENDERING_METHOD.includes(item.begin.sliceName) &&
+      (!item.begin.pipelineIds || item.begin.pipelineIds.length <= 1)
+    ) {
+      continue;
+    }
+    if (
+      LYNX_VIEW_PLATFORM_RENDERING_METHOD.includes(item.end.sliceName) &&
+      (!item.end.pipelineIds || item.end.pipelineIds.length <= 1)
+    ) {
+      continue;
+    }
+    if (flowNeedsToFilter.includes(item)) {
       flow.splice(i, 1);
     }
   }

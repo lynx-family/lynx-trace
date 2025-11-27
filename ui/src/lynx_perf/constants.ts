@@ -132,3 +132,9 @@ export const PIXEL_UPDATE = [
   'LynxBatchedUpdateData',
   'TemplateAssembler::CallLepusMethod',
 ];
+
+export const LYNX_VIEW_PLATFORM_RENDERING_METHOD = [
+  'LynxView.onMeasure',
+  'LynxView.onLayout',
+  'LynxView.onDraw',
+];
