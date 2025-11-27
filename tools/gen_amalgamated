@@ -63,8 +63,8 @@ c_sdk_header_filter = r'^include/perfetto/public/'
 # Arguments for the GN output directory (unless overridden from the command
 # line).
 gn_args = ' '.join([
-    'enable_perfetto_ipc=true',
-    'enable_perfetto_zlib=false',
+    'enable_perfetto_ipc=false',
+    'enable_perfetto_zlib=true',
     # The amalgamated SDK uses std::regex as the fallback. RE2 and PCRE2
     # are disabled to avoid pulling in large third-party dependencies.
     'enable_perfetto_re2=false',

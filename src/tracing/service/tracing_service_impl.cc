@@ -59,6 +59,10 @@
 #include <sys/stat.h>
 #endif
 
+#if PERFETTO_BUILDFLAG(PERFETTO_ZLIB)
+#include "src/tracing/service/zlib_compressor.h"
+#endif
+
 #include "perfetto/base/build_config.h"
 #include "perfetto/base/compiler.h"
 #include "perfetto/base/logging.h"
@@ -154,6 +158,11 @@ std::unique_ptr<TracingService> TracingService::CreateInstance(
   deps.clock = std::make_unique<tracing_service::ClockImpl>();
   uint32_t seed = static_cast<uint32_t>(deps.clock->GetWallTimeMs().count());
   deps.random = std::make_unique<tracing_service::RandomImpl>(seed);
+#if PERFETTO_BUILDFLAG(PERFETTO_ZLIB)
+  if (!init_opts.compressor_fn) {
+    init_opts.compressor_fn = &ZlibCompressFn;
+  }
+#endif
   return std::unique_ptr<TracingService>(
       new tracing_service::TracingServiceImpl(
           std::move(shm_factory), task_runner, std::move(deps), init_opts));

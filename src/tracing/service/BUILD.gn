@@ -42,6 +42,12 @@ source_set("service") {
     "../../protozero/filtering:string_filter",
     "../core",
   ]
+  if (enable_perfetto_zlib) {
+    deps += [
+      ":zlib_compressor",
+      "../../../gn:zlib",
+    ]
+  }
   sources = [
     "clock.cc",
     "clock.h",
