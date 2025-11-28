@@ -75,17 +75,21 @@ export async function getBackgroundScriptThreadTrackNode(
     const backgroundTraceEventsStr = BACKGROUND_TRACE_EVENTS.map(
       (item) => `'${item}'`,
     ).join(',');
-    const nativeModuleTrackIdQuery = await ctx.engine.query(
-      `select slice.track_id from slice where slice.name in (${backgroundTraceEventsStr})`,
+    const nativeModuleThreadIdQuery = await ctx.engine.query(
+      `select thread.tid from slice 
+        join thread_track on slice.track_id = thread_track.id 
+        join thread on thread_track.utid = thread.utid
+        where slice.name in (${backgroundTraceEventsStr})`,
     );
-    const iterResult = nativeModuleTrackIdQuery.iter({track_id: NUM});
+    const iterResult = nativeModuleThreadIdQuery.iter({tid: NUM});
     if (iterResult.valid()) {
-      const nativeModuleTrackId = iterResult.track_id.toString();
+      const nativeModuleThreadId = iterResult.tid.toString();
       for (let i = item.children.length - 1; i >= 0; i--) {
         const trackNode = item.children[i];
-        const uriParts = trackNode.uri?.split('_');
-        const lastPart = uriParts ? uriParts[uriParts.length - 1] : null;
-        if (lastPart === nativeModuleTrackId) {
+        const uriParts = trackNode.title?.split(' ');
+        const lastPart =
+          uriParts.length > 0 ? uriParts[uriParts.length - 1] : null;
+        if (lastPart === nativeModuleThreadId) {
           return trackNode;
         }
       }
