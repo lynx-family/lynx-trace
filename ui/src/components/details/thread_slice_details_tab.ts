@@ -681,7 +681,10 @@ export class ThreadSliceDetailsPanel implements TrackEventDetailsPanel {
   }
 
   private renderScreenshot() {
-    if (this.sliceDetails?.name === 'screenshot' && this.sliceDetails.args) {
+    if (
+      this.sliceDetails?.name === 'FSPSnapshotBase64Bitmap' &&
+      this.sliceDetails.args
+    ) {
       const data = getFirstArgString(this.sliceDetails.args, [
         'debug.data',
         'args.data',
