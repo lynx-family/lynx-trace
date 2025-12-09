@@ -140,71 +140,113 @@ export class TraceAssistantPanel
     content: string,
     childStepId: string = '',
   ) => {
-    this.setState((prevState) => {
-      const existingStepIndex = prevState.analysisSteps.findIndex(
-        (step) =>
-          step.id === stepId ||
-          step.title.toLowerCase().includes(stepId.toLowerCase()),
-      );
+    const isMatch = (step: AnalysisStep, id: string) => step.id === id;
 
-      if (existingStepIndex !== -1) {
-        // update current step
-        const updatedSteps = [...prevState.analysisSteps];
-        if (childStepId) {
-          const step = updatedSteps[existingStepIndex];
-          const details = step.details ?? [];
-          const childStepIndex = details.findIndex(
-            (detail) =>
-              typeof detail === 'object' &&
-              (detail.id === childStepId ||
-                detail.title.toLowerCase().includes(childStepId.toLowerCase())),
-          );
-          const updatedDetails = [...details];
-          if (childStepIndex === -1) {
-            updatedDetails.push({
-              id: childStepId,
-              title,
-              status,
-              details: content ? [content] : [],
-              collapsed: false,
-            });
-          } else {
-            const childStep = updatedDetails[childStepIndex];
-            if (typeof childStep === 'object') {
-              updatedDetails[childStepIndex] = {
-                ...childStep,
-                status,
-                details: content
-                  ? [...childStep.details, content]
-                  : childStep.details,
-              };
-            }
-          }
-          updatedSteps[existingStepIndex] = {
-            ...step,
-            details: updatedDetails,
-          };
-        } else {
-          updatedSteps[existingStepIndex] = {
-            ...updatedSteps[existingStepIndex],
-            status,
-            details: content
-              ? [...updatedSteps[existingStepIndex].details, content]
-              : updatedSteps[existingStepIndex].details,
-          };
-        }
-        return {analysisSteps: updatedSteps};
-      } else {
-        // add new step
-        const newStep: AnalysisStep = {
-          id: stepId,
-          title: title,
-          status: status,
+    const isAnalysisStep = (detail: unknown): detail is AnalysisStep =>
+      detail !== null && typeof detail === 'object';
+
+    const addOrUpdateChild = (
+      parent: AnalysisStep,
+      childId: string,
+    ): AnalysisStep => {
+      const details = parent.details || [];
+      const idx = details.findIndex(
+        (detail) => isAnalysisStep(detail) && detail.id === childId,
+      );
+      if (idx === -1) {
+        const newChild: AnalysisStep = {
+          id: childId,
+          title,
+          status,
           details: content ? [content] : [],
           collapsed: false,
         };
-        return {analysisSteps: [...prevState.analysisSteps, newStep]};
+        return {
+          ...parent,
+          details: [...details, newChild],
+        };
+      } else {
+        const child = details[idx] as AnalysisStep;
+        const updatedChild: AnalysisStep = {
+          ...child,
+          status,
+          details: content ? [...child.details, content] : child.details,
+        };
+        const newDetails = [...details];
+        newDetails[idx] = updatedChild;
+        return {
+          ...parent,
+          details: newDetails,
+        };
       }
+    };
+
+    const updateStep = (
+      step: AnalysisStep,
+    ): {step: AnalysisStep; found: boolean} => {
+      // If current step matches the target stepId, update here
+      if (isMatch(step, stepId)) {
+        if (childStepId) {
+          return {step: addOrUpdateChild(step, childStepId), found: true};
+        }
+        return {
+          step: {
+            ...step,
+            status,
+            details: content ? [...step.details, content] : step.details,
+          },
+          found: true,
+        };
+      }
+
+      // Otherwise, traverse nested details and update the matching child at the correct position
+      if (Array.isArray(step.details) && step.details.length > 0) {
+        let found = false;
+        const newDetails = step.details.map((detail) => {
+          if (isAnalysisStep(detail)) {
+            const res = updateStep(detail);
+            if (res.found) found = true;
+            return res.step; // replace only this child
+          }
+          return detail; // keep non-AnalysisStep entries as-is
+        });
+        if (found) {
+          return {step: {...step, details: newDetails}, found: true};
+        }
+      }
+      return {step, found: false};
+    };
+
+    const updateAtAnyDepth = (
+      steps: AnalysisStep[],
+    ): {updated: AnalysisStep[]; found: boolean} => {
+      let found = false;
+      const updated = steps.map((step) => {
+        if (found) return step;
+        const res = updateStep(step);
+        if (res.found) {
+          found = true;
+          return res.step;
+        }
+        return step;
+      });
+      return {updated, found};
+    };
+
+    this.setState((prevState) => {
+      const {updated, found} = updateAtAnyDepth(prevState.analysisSteps);
+      if (found) {
+        return {analysisSteps: updated};
+      }
+      // Not found anywhere: add as a new top-level step
+      const newStep: AnalysisStep = {
+        id: stepId,
+        title,
+        status,
+        details: content ? [content] : [],
+        collapsed: false,
+      };
+      return {analysisSteps: [...prevState.analysisSteps, newStep]};
     });
   };
 
@@ -214,6 +256,10 @@ export class TraceAssistantPanel
     });
     this.setState({
       status: 'analyzing',
+      analysisResult: '',
+      extraActionArea: undefined,
+      extraActionProperties: {},
+      analysisSteps: [],
     });
     try {
       const report = await llmState.state.traceAnalysis?.analysis(this);
@@ -284,7 +330,6 @@ export class TraceAssistantPanel
       analysisSteps: [],
     });
   };
-
   renderContent = () => {
     const {status} = this.state;
 
