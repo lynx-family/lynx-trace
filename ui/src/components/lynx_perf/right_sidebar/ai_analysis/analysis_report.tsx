@@ -4,6 +4,7 @@
 
 import { Component } from 'react';
 import ReactMarkdown from 'react-markdown';
+import rehypeRaw from 'rehype-raw';
 import { Card } from 'antd';
 import { Router } from '../../../../core/router';
 import { AppImpl } from '../../../../core/app_impl';
@@ -109,6 +110,7 @@ export class AnalysisReportComponent extends Component<AnalysisReportProps> {
             }}
           >
             <ReactMarkdown
+              rehypePlugins={[rehypeRaw]}
               components={{
                 h2: ({ children }: any) => (
                   <h2 style={{ color: '#000000', fontSize: '18px', fontWeight: '700', marginBottom: '12px' }}>
