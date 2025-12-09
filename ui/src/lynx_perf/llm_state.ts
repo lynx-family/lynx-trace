@@ -16,7 +16,7 @@ export interface AnalysisStep {
   id: string;
   title: string;
   status: 'wait' | 'process' | 'finish' | 'error';
-  details: string[];
+  details: (string | AnalysisStep)[];
   collapsed?: boolean;
 }
 
@@ -26,6 +26,7 @@ export interface StepListener {
     title: string,
     status: 'wait' | 'process' | 'finish' | 'error',
     content: string,
+    childStepId?: string,
   ): void;
 }
 
