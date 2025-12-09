@@ -12,50 +12,123 @@ interface AnalysisProcessProps {
   steps: AnalysisStep[];
 }
 
-interface AnalysisProcessState {
-  expandedSteps: Set<string>;
-}
-
-export class AnalysisProcess extends React.Component<AnalysisProcessProps, AnalysisProcessState> {
-  constructor(props: AnalysisProcessProps) {
+class AnalysisStepItem extends React.Component<{ step: AnalysisStep }, { expanded: boolean }> {
+  constructor(props: { step: AnalysisStep }) {
     super(props);
-    this.state = {
-      expandedSteps: new Set()
-    };
+    this.state = { expanded: false };
   }
 
-  toggleStep = (stepId: string) => {
-    const { expandedSteps } = this.state;
-    const newExpanded = new Set(expandedSteps);
-    
-    if (newExpanded.has(stepId)) {
-      newExpanded.delete(stepId);
-    } else {
-      newExpanded.add(stepId);
-    }
-    
-    this.setState({ expandedSteps: newExpanded });
+  toggle = () => {
+    this.setState((prev) => ({ expanded: !prev.expanded }));
   };
 
-  getStatusIcon = (status: string) => {
+  getStatusIcon(status: string) {
     switch (status) {
       case 'finish':
         return <CheckCircle size={16} style={{ color: '#22c55e' }} />;
       case 'process':
-        return <Loader size={16} style={{ 
-          color: '#3b82f6',
-          animation: 'ai-analysis-spin 1s linear infinite'
-        }} />;
+        return (
+          <Loader
+            size={16}
+            style={{ color: '#3b82f6', animation: 'ai-analysis-spin 1s linear infinite' }}
+          />
+        );
       case 'error':
         return <Circle size={16} style={{ color: '#ef4444' }} />;
       default:
         return <Circle size={16} style={{ color: '#d1d5db' }} />;
     }
-  };
+  }
+
+  renderDetail(detail: string | AnalysisStep, idx: number) {
+    if (typeof detail === 'string') {
+      return (
+        <div
+          key={idx}
+          style={{
+            fontSize: '0.875rem',
+            color: '#6b7280',
+            lineHeight: 1.5,
+            paddingLeft: '8px',
+            borderLeft: '2px solid #d1d5db',
+            wordBreak: 'break-word',
+            overflowWrap: 'break-word',
+            maxWidth: '100%'
+          }}
+        >
+          • {detail}
+        </div>
+      );
+    }
+    // Nested AnalysisStep
+    return <AnalysisStepItem key={detail.id || idx} step={detail} />;
+  }
+
+  render() {
+    const { step } = this.props;
+    const { expanded } = this.state;
+
+    const hasDetails = Array.isArray(step.details) && step.details.length > 0;
+
+    return (
+      <div
+        style={{
+          backgroundColor: '#ffffff',
+          border: '1px solid #e5e7eb',
+          borderRadius: '12px',
+          boxShadow: '0 1px 2px 0 rgba(0, 0, 0, 0.05)',
+          transition: 'all 0.3s ease-in-out'
+        }}
+      >
+        {/* Header */}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: '16px',
+            cursor: hasDetails ? 'pointer' : 'default',
+            borderBottom: expanded && hasDetails ? '1px solid #e5e7eb' : 'none'
+          }}
+          onClick={() => hasDetails && this.toggle()}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <div style={{ flexShrink: 0 }}>{this.getStatusIcon(step.status)}</div>
+            <span
+              style={{ fontWeight: 500, color: '#121212', wordBreak: 'break-word', flex: 1 }}
+            >
+              {step.title}
+            </span>
+          </div>
+          {hasDetails && (
+            expanded ? (
+              <ChevronDown size={16} style={{ color: '#121212', flexShrink: 0 }} />
+            ) : (
+              <ChevronRight size={16} style={{ color: '#121212', flexShrink: 0 }} />
+            )
+          )}
+        </div>
+
+        {/* Details */}
+        {expanded && hasDetails && (
+          <div style={{ padding: '16px' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              {step.details.map((detail: any, idx: number) => this.renderDetail(detail, idx))}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+}
+
+export class AnalysisProcess extends React.Component<AnalysisProcessProps, {}> {
+  constructor(props: AnalysisProcessProps) {
+    super(props);
+  }
 
   render() {
     const { steps } = this.props;
-    const { expandedSteps } = this.state;
 
     return (
       <div>
@@ -66,83 +139,9 @@ export class AnalysisProcess extends React.Component<AnalysisProcessProps, Analy
           marginBottom: '16px'
         }}>Analysis Process</h3>
         
-        <div style={{
-          display: 'flex',
-          flexDirection: 'column',
-          gap: '12px'
-        }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
           {steps.map((step: AnalysisStep) => (
-            <div key={step.id} style={{
-              backgroundColor: '#ffffff',
-              border: '1px solid #e5e7eb',
-              borderRadius: '12px',
-              boxShadow: '0 1px 2px 0 rgba(0, 0, 0, 0.05)',
-              transition: 'all 0.3s ease-in-out'
-            }}>
-              {/* Step Header */}
-              <div 
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  padding: '16px',
-                  cursor: step.details.length > 0 ? 'pointer' : 'default',
-                  borderBottom: expandedSteps.has(step.id) && step.details.length > 0 ? '1px solid #e5e7eb' : 'none'
-                }}
-                onClick={() => step.details.length > 0 && this.toggleStep(step.id)}
-              >
-                <div style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '12px'
-                }}>
-                  <div style={{
-                    flexShrink: 0
-                  }}>
-                    {this.getStatusIcon(step.status)}
-                  </div>
-                  <span style={{
-                    fontWeight: 500,
-                    color: '#121212',
-                    wordBreak: 'break-word',
-                    flex: 1
-                  }}>
-                    {step.title}
-                  </span>
-                </div>
-                {step.details.length > 0 && (
-                  expandedSteps.has(step.id) ? 
-                    <ChevronDown size={16} style={{ color: '#121212', flexShrink: 0 }} /> : 
-                    <ChevronRight size={16} style={{ color: '#121212', flexShrink: 0 }} />
-                )}
-              </div>
-
-              {/* Step Details */}
-              {expandedSteps.has(step.id) && step.details.length > 0 && (
-                <div style={{ padding: '16px' }}>
-                  <div style={{
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: '8px'
-                  }}>
-                    {step.details.map((detail: string, idx: number) => (
-                      <div key={idx} style={{
-                        fontSize: '0.875rem',
-                        color: '#6b7280',
-                        lineHeight: 1.5,
-                        paddingLeft: '8px',
-                        borderLeft: '2px solid #d1d5db',
-                        wordBreak: 'break-word',
-                        overflowWrap: 'break-word',
-                        maxWidth: '100%'
-                      }}>
-                        • {detail}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
+            <AnalysisStepItem key={step.id} step={step} />
           ))}
         </div>
       </div>
