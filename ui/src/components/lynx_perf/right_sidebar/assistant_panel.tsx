@@ -138,6 +138,7 @@ export class TraceAssistantPanel
     title: string,
     status: 'wait' | 'process' | 'finish' | 'error',
     content: string,
+    childStepId: string = '',
   ) => {
     this.setState((prevState) => {
       const existingStepIndex = prevState.analysisSteps.findIndex(
@@ -149,13 +150,49 @@ export class TraceAssistantPanel
       if (existingStepIndex !== -1) {
         // update current step
         const updatedSteps = [...prevState.analysisSteps];
-        updatedSteps[existingStepIndex] = {
-          ...updatedSteps[existingStepIndex],
-          status,
-          details: content
-            ? [...updatedSteps[existingStepIndex].details, content]
-            : updatedSteps[existingStepIndex].details,
-        };
+        if (childStepId) {
+          const step = updatedSteps[existingStepIndex];
+          const details = step.details ?? [];
+          const childStepIndex = details.findIndex(
+            (detail) =>
+              typeof detail === 'object' &&
+              (detail.id === childStepId ||
+                detail.title.toLowerCase().includes(childStepId.toLowerCase())),
+          );
+          const updatedDetails = [...details];
+          if (childStepIndex === -1) {
+            updatedDetails.push({
+              id: childStepId,
+              title,
+              status,
+              details: content ? [content] : [],
+              collapsed: false,
+            });
+          } else {
+            const childStep = updatedDetails[childStepIndex];
+            if (typeof childStep === 'object') {
+              updatedDetails[childStepIndex] = {
+                ...childStep,
+                status,
+                details: content
+                  ? [...childStep.details, content]
+                  : childStep.details,
+              };
+            }
+          }
+          updatedSteps[existingStepIndex] = {
+            ...step,
+            details: updatedDetails,
+          };
+        } else {
+          updatedSteps[existingStepIndex] = {
+            ...updatedSteps[existingStepIndex],
+            status,
+            details: content
+              ? [...updatedSteps[existingStepIndex].details, content]
+              : updatedSteps[existingStepIndex].details,
+          };
+        }
         return {analysisSteps: updatedSteps};
       } else {
         // add new step
