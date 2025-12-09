@@ -39,9 +39,7 @@ export interface AnalysisReport {
 
 export interface ReportExtraAction {
   render(
-    // TODO: fix the type of results to be TraceAnalysisResult[]
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    results: any[] | undefined,
+    results: string,
     steps: AnalysisStep[] | undefined,
     actionProperties: Record<string, string> | undefined,
   ): Promise<React.ReactNode | undefined>;
@@ -52,9 +50,6 @@ export interface ReportExtraAction {
 
   saveAnalysisReport(result: AnalysisReport): Promise<boolean>;
 
-  // TODO: fix the type of results to be TraceAnalysisResult[]
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  generateCharts(traceResult: any): Promise<string[]>;
 }
 
 export interface TraceAnalysis {

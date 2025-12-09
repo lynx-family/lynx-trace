@@ -75,7 +75,7 @@ export class TraceAssistantPanel extends Component<{}, TraceAssistantPanelState>
       const prevAnalysisResult = await llmState.state.reportExtraAction?.getHistoryAnalysisReport();
       if (prevAnalysisResult && this.state.status == 'initial') {
         console.log('prevAnalysisResult', JSON.stringify(prevAnalysisResult));
-        const extraActionArea = await llmState.state.reportExtraAction?.render(undefined, undefined, prevAnalysisResult.extraActionProperties);
+        const extraActionArea = await llmState.state.reportExtraAction?.render('', undefined, prevAnalysisResult.extraActionProperties);
         this.setState({
           ...this.state,
           status: 'completed',
@@ -118,49 +118,103 @@ export class TraceAssistantPanel extends Component<{}, TraceAssistantPanelState>
   }
 
   onStepUpdate = (stepId: string, title: string, status: 'wait' | 'process' | 'finish' | 'error', content: string, childStepId: string = '') => {
-    this.setState(prevState => {
-      const existingStepIndex = prevState.analysisSteps.findIndex(step => 
-        step.id === stepId || step.title.toLowerCase().includes(stepId.toLowerCase())
-      );
-      
-      if (existingStepIndex !== -1) {
-        // update current step
-        const updatedSteps = [...prevState.analysisSteps];
-        if (childStepId) {
-          const details = updatedSteps[existingStepIndex].details || [];
-          let childStep = details.find(step => typeof step === 'object' && (step.id === childStepId || step.title.toLowerCase().includes(childStepId.toLowerCase())));
-          if (!childStep) {
-            childStep = {
-              id: childStepId,
-              title: title,
-              status: status,
-              details: content ? [content] : [],
-              collapsed: false
-            };
-            details.push(childStep);
-          } else {
-            (childStep as AnalysisStep).status = status;
-            (childStep as AnalysisStep).details = content ? [...(childStep as AnalysisStep).details, content] : (childStep as AnalysisStep).details;
-          }
-        } else {
-          updatedSteps[existingStepIndex] = {
-            ...updatedSteps[existingStepIndex],
-            status,
-            details: content ? [...updatedSteps[existingStepIndex].details, content] : updatedSteps[existingStepIndex].details
-          };
-        }
-        return { analysisSteps: updatedSteps };
-      } else {
-        // add new step
-        const newStep: AnalysisStep = {
-          id: stepId,
-          title: title,
-          status: status,
+    const isMatch = (step: AnalysisStep, id: string) => step.id === id ;
+
+    const isAnalysisStep = (d: any): d is AnalysisStep => d && typeof d === 'object';
+
+    const addOrUpdateChild = (parent: AnalysisStep, childId: string): AnalysisStep => {
+      const details = parent.details || [];
+      const idx = details.findIndex((d: any) => isAnalysisStep(d) && (d.id === childId));
+      if (idx === -1) {
+        const newChild: AnalysisStep = {
+          id: childId,
+          title,
+          status,
           details: content ? [content] : [],
-          collapsed: false
+          collapsed: false,
         };
-        return { analysisSteps: [...prevState.analysisSteps, newStep] };
+        return {
+          ...parent,
+          details: [...details, newChild],
+        };
+      } else {
+        const child = details[idx] as AnalysisStep;
+        const updatedChild: AnalysisStep = {
+          ...child,
+          status,
+          details: content ? [...child.details, content] : child.details,
+        };
+        const newDetails = [...details];
+        newDetails[idx] = updatedChild;
+        return {
+          ...parent,
+          details: newDetails,
+        };
       }
+    };
+
+    const updateStep = (s: AnalysisStep): { step: AnalysisStep; found: boolean } => {
+      // If current step matches the target stepId, update here
+      if (isMatch(s, stepId)) {
+        if (childStepId) {
+          return { step: addOrUpdateChild(s, childStepId), found: true };
+        }
+        return {
+          step: {
+            ...s,
+            status,
+            details: content ? [...s.details, content] : s.details,
+          },
+          found: true,
+        };
+      }
+
+      // Otherwise, traverse nested details and update the matching child at the correct position
+      if (Array.isArray(s.details) && s.details.length > 0) {
+        let found = false;
+        const newDetails = s.details.map((d: any) => {
+          if (isAnalysisStep(d)) {
+            const res = updateStep(d);
+            if (res.found) found = true;
+            return res.step; // replace only this child
+          }
+          return d; // keep non-AnalysisStep entries as-is
+        });
+        if (found) {
+          return { step: { ...s, details: newDetails }, found: true };
+        }
+      }
+      return { step: s, found: false };
+    };
+
+    const updateAtAnyDepth = (steps: AnalysisStep[]): { updated: AnalysisStep[]; found: boolean } => {
+      let found = false;
+      const updated = steps.map((s) => {
+        if (found) return s;
+        const res = updateStep(s);
+        if (res.found) {
+          found = true;
+          return res.step;
+        }
+        return s;
+      });
+      return { updated, found };
+    };
+
+    this.setState((prevState) => {
+      const { updated, found } = updateAtAnyDepth(prevState.analysisSteps);
+      if (found) {
+        return { analysisSteps: updated };
+      }
+      // Not found anywhere: add as a new top-level step
+      const newStep: AnalysisStep = {
+        id: stepId,
+        title,
+        status,
+        details: content ? [content] : [],
+        collapsed: false,
+      };
+      return { analysisSteps: [...prevState.analysisSteps, newStep] };
     });
   };
 
@@ -170,6 +224,10 @@ export class TraceAssistantPanel extends Component<{}, TraceAssistantPanelState>
     });
     this.setState({
       status: 'analyzing',
+      analysisResult: '',
+      extraActionArea: undefined,
+      extraActionProperties: {},
+      analysisSteps: [],
     });
     try {
       const report = await llmState.state.traceAnalysis?.analysis(this);
@@ -216,18 +274,7 @@ export class TraceAssistantPanel extends Component<{}, TraceAssistantPanelState>
   };
 
   restartAnalysis = () => {
-    this.resetToInitial();
     this.triggerTraceAIAnalysis("restart");
-  };
-
-  resetToInitial = () => {
-    this.setState({
-      status: 'initial',
-      analysisResult: '',
-      extraActionArea: undefined,
-      extraActionProperties: {},
-      analysisSteps: []
-    });
   };
 
   renderContent = () => {
