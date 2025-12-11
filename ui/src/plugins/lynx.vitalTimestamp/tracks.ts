@@ -26,6 +26,7 @@ import {
   PIPELINE_ID,
   TIMING_FLAGS,
   SLICE_LAYOUT_FIT_CONTENT_DEFAULTS,
+  TIMING_MARK_FSP_END,
 } from '../../lynx_perf/constants';
 import {NUM, STR} from '../../trace_processor/query_result';
 import {VitalTimestamp} from '../../lynx_perf/types';
@@ -39,6 +40,7 @@ import {TrackEventSelection} from '../../public/selection';
 import {TrackEventDetailsPanel} from '../../public/details_panel';
 import {VitalTimestampDetailsPanel} from './details';
 import {featureFlags} from '../../core/feature_flags';
+import {ThreadSliceDetailsPanel} from '../../components/details/thread_slice_details_tab';
 
 interface PaintEndSlice {
   name: string;
@@ -59,6 +61,7 @@ export class VitalTimestampTrack extends LynxBaseTrack<VitalTimestamp[]> {
   protected maxSliceDepth = 0;
   private selectedMarker: VitalTimestamp | undefined;
   private besselControlX = 3 * SLICE_LAYOUT_FIT_CONTENT_DEFAULTS.padding;
+  private fspEventIds: number[] = [];
   /**
    * To enable the flow_manager to automatically query flow connection information for the selected trace events,
    * the rootTableName is proactively set to "slice".
@@ -85,6 +88,7 @@ export class VitalTimestampTrack extends LynxBaseTrack<VitalTimestamp[]> {
     _end: time,
     _resolution: duration,
   ): Promise<VitalTimestamp[]> {
+    this.fspEventIds = [];
     const paintEndQuery = TIMING_PAINT_END.map((name) => `'${name}'`).join(',');
     const result = await this.trace.engine.query(`
       select ts, slice.id as id, name, dur, track_id as trackId, args.key as argKey, args.display_value as argValue
@@ -143,6 +147,17 @@ export class VitalTimestampTrack extends LynxBaseTrack<VitalTimestamp[]> {
     for (const slice of paintEndSlices) {
       // Currently, same pipelineId may have multiple paintEnd, skip the same pipelineId later
       if (!slice.pipelineId || pipelineIdSet.has(slice.pipelineId)) {
+        // FSP do not have any pipelineId
+        if (slice.name === TIMING_MARK_FSP_END) {
+          this.fspEventIds.push(slice.id);
+          markers.push({
+            name: ['Lynx_FSP'],
+            ts: slice.ts,
+            id: slice.id,
+            trackId: slice.trackId,
+            pipelineId: '',
+          });
+        }
         continue;
       }
       let timingFlags: string[] = [];
@@ -392,7 +407,11 @@ export class VitalTimestampTrack extends LynxBaseTrack<VitalTimestamp[]> {
   /**
    * Creates details panel for selected marker
    */
-  detailsPanel?(_: TrackEventSelection): TrackEventDetailsPanel {
+  detailsPanel?(selection: TrackEventSelection): TrackEventDetailsPanel {
+    // Show default slice detail panel for FSP
+    if (this.fspEventIds.includes(selection.eventId)) {
+      return new ThreadSliceDetailsPanel(this.trace);
+    }
     return new VitalTimestampDetailsPanel(this.trace);
   }
 }
