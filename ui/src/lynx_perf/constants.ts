@@ -43,10 +43,13 @@ export const SLICE_LAYOUT_FLAT_DEFAULTS = Object.freeze({
 });
 
 // Timing
+export const TIMING_MARK_FSP_END = 'Timing::Mark.fspEnd';
 export const TIMING_PAINT_END = [
   'Timing::Mark.draw_end',
   'Timing::Mark.paintEnd',
+  TIMING_MARK_FSP_END,
 ];
+
 export const PAINT_END_KEYS = ['draw_end', 'paintEnd'];
 export const CRUCIAL_TIMING_KEYS = [
   'update_set_state_trigger',
