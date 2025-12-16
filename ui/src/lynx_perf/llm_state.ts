@@ -40,7 +40,7 @@ export interface AnalysisReport {
 export interface ReportExtraAction {
   render(
     results: string,
-    steps: AnalysisStep[] | undefined,
+    stepsLog: string,
     actionProperties: Record<string, string> | undefined,
   ): Promise<React.ReactNode | undefined>;
 
@@ -49,7 +49,6 @@ export interface ReportExtraAction {
   getHistoryAnalysisReport(): Promise<AnalysisReport | undefined>;
 
   saveAnalysisReport(result: AnalysisReport): Promise<boolean>;
-
 }
 
 export interface TraceAnalysis {

@@ -75,7 +75,7 @@ export class TraceAssistantPanel extends Component<{}, TraceAssistantPanelState>
       const prevAnalysisResult = await llmState.state.reportExtraAction?.getHistoryAnalysisReport();
       if (prevAnalysisResult && this.state.status == 'initial') {
         console.log('prevAnalysisResult', JSON.stringify(prevAnalysisResult));
-        const extraActionArea = await llmState.state.reportExtraAction?.render('', undefined, prevAnalysisResult.extraActionProperties);
+        const extraActionArea = await llmState.state.reportExtraAction?.render('', '', prevAnalysisResult.extraActionProperties);
         this.setState({
           ...this.state,
           status: 'completed',
