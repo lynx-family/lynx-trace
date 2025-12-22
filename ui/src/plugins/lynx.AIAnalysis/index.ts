@@ -21,7 +21,7 @@ export default class AIAnalysis implements PerfettoPlugin {
       id: `${AIAnalysis.id}#ModelNameSetting`,
       name: 'LLM Model',
       description:
-        'The specific LLM model to use, such as seed-1.5, seed-1.6 for doubao provider.',
+        'The specific LLM model to use, such as seed-1.8 for doubao provider.',
       schema: z.string(),
       defaultValue: '',
       requiresReload: true,

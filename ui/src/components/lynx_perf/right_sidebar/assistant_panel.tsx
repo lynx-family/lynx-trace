@@ -254,42 +254,46 @@ export class TraceAssistantPanel
     eventLoggerState.state.eventLogger.logEvent('ai_analysis_click', {
       from: from,
     });
-    this.setState({
-      status: 'analyzing',
-      analysisResult: '',
-      extraActionArea: undefined,
-      extraActionProperties: {},
-      analysisSteps: [],
-    });
-    try {
-      const report = await llmState.state.traceAnalysis?.analysis(this);
-      if (report) {
-        this.setState(
-          {
-            status: 'completed',
-            analysisResult: report.analysisResult,
-            analysisSteps: report.analysisSteps,
-            extraActionArea: report.extraActionArea,
-            extraActionProperties: report.extraActionProperties,
-          },
-          async () => {
-            await this.saveCurrentReportStatus();
-          },
-        );
-        eventLoggerState.state.eventLogger.logEvent(
-          'ai_analysis_show_report',
-          {},
-        );
-        return;
-      }
-    } catch (error) {
-      console.error('AI analysis request failed:', error);
-      this.setState({
-        status: 'completed',
-        analysisResult: 'Analysis failed, please try again later.',
+    this.setState(
+      {
+        status: 'analyzing',
+        analysisResult: '',
         extraActionArea: undefined,
-      });
-    }
+        extraActionProperties: {},
+        analysisSteps: [],
+      },
+      async () => {
+        try {
+          const report = await llmState.state.traceAnalysis?.analysis(this);
+          if (report) {
+            this.setState(
+              {
+                status: 'completed',
+                analysisResult: report.analysisResult,
+                analysisSteps: report.analysisSteps,
+                extraActionArea: report.extraActionArea,
+                extraActionProperties: report.extraActionProperties,
+              },
+              async () => {
+                await this.saveCurrentReportStatus();
+              },
+            );
+            eventLoggerState.state.eventLogger.logEvent(
+              'ai_analysis_show_report',
+              {},
+            );
+            return;
+          }
+        } catch (error) {
+          console.error('AI analysis request failed:', error);
+          this.setState({
+            status: 'completed',
+            analysisResult: 'Analysis failed, please try again later.',
+            extraActionArea: undefined,
+          });
+        }
+      },
+    );
   };
 
   validateLynxVersion = async (): Promise<boolean> => {
@@ -332,6 +336,9 @@ export class TraceAssistantPanel
   };
   renderContent = () => {
     const {status} = this.state;
+    const modelChoosePanel = llmState.state.modelChoosePanel || (
+      <SettingsButton onValidationComplete={this.performValidation} />
+    );
 
     switch (status) {
       case 'initial':
@@ -395,8 +402,7 @@ export class TraceAssistantPanel
                 </div>
               )}
             </div>
-
-            <SettingsButton onValidationComplete={this.performValidation} />
+            {modelChoosePanel}
           </div>
         );
 
@@ -412,7 +418,7 @@ export class TraceAssistantPanel
             <div style={{marginTop: '24px'}}>
               <AnalysisProcess steps={this.state.analysisSteps} />
             </div>
-            <SettingsButton onValidationComplete={this.performValidation} />
+            {modelChoosePanel}
           </div>
         );
       case 'completed':
@@ -458,7 +464,7 @@ export class TraceAssistantPanel
                 Analyze Again
               </Button>
             </div>
-            <SettingsButton onValidationComplete={this.performValidation} />
+            {modelChoosePanel}
           </div>
         );
 
