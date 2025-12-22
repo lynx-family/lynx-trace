@@ -49,7 +49,6 @@ export interface ReportExtraAction {
   getHistoryAnalysisReport(): Promise<AnalysisReport | undefined>;
 
   saveAnalysisReport(result: AnalysisReport): Promise<boolean>;
-
 }
 
 export interface TraceAnalysis {
@@ -59,6 +58,7 @@ export interface TraceAnalysis {
 interface State {
   showAnalysisEntry: boolean;
   config: LLMConfig;
+  modelChoosePanel: React.ReactNode | undefined;
   reportExtraAction: ReportExtraAction | undefined;
   traceAnalysis: TraceAnalysis | undefined;
 }
@@ -72,6 +72,7 @@ const emptyState: State = {
     baseUrl: '',
     customPrompt: '',
   },
+  modelChoosePanel: undefined,
   reportExtraAction: undefined,
   traceAnalysis: undefined,
 };
