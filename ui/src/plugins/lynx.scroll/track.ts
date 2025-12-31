@@ -18,7 +18,7 @@
 
 import {Duration, duration, Time, time} from '../../base/time';
 import {TrackRenderContext} from '../../public/track';
-import {NUM, STR} from '../../trace_processor/query_result';
+import {NUM, NUM_NULL, STR} from '../../trace_processor/query_result';
 import {Button} from '../../widgets/button';
 import m from 'mithril';
 import {
@@ -71,7 +71,7 @@ export class LynxScrollTrack extends LynxBaseTrack<ScrollSection[]> {
     const it = result.iter({
       name: STR,
       ts: NUM,
-      argSetId: NUM,
+      argSetId: NUM_NULL,
       id: NUM,
     });
     const scrollSections: ScrollSection[] = [];
@@ -88,14 +88,16 @@ export class LynxScrollTrack extends LynxBaseTrack<ScrollSection[]> {
           scrollEndTs = ts;
         } else {
           hasScroll = true;
-          const args = await getArgs(
-            this.trace.engine,
-            asArgSetId(it.argSetId),
-          );
-          tag = getFirstStringArg(args, [
-            `debug.${PARAMETER_TAG}`,
-            `args.${PARAMETER_TAG}`,
-          ]);
+          if (it.argSetId != null) {
+            const args = await getArgs(
+              this.trace.engine,
+              asArgSetId(it.argSetId),
+            );
+            tag = getFirstStringArg(args, [
+              `debug.${PARAMETER_TAG}`,
+              `args.${PARAMETER_TAG}`,
+            ]);
+          }
           // try find the top 'Choreographer#doFrame' for Android platform
           const topDoFrame = await this.findTopChoreographerDoFrame(
             this.trace,
