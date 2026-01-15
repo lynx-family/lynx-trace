@@ -43,6 +43,7 @@ import {
   validPipelineBeginStage,
 } from './details_helpers';
 import {eventLoggerState} from '../../event_logger';
+import {stringToJsonObject} from '../../lynx_perf/string_utils';
 
 /**
  * Pipeline Stage Interface
@@ -292,7 +293,10 @@ export class VitalTimestampDetailsPanel implements TrackEventDetailsPanel {
     if (!jsonTree) {
       return undefined;
     }
-    const rootElementAbbr = JSON.parse(jsonTree);
+    const rootElementAbbr = stringToJsonObject(jsonTree);
+    if (rootElementAbbr === undefined) {
+      return undefined;
+    }
     return reConstructElementTree(rootElementAbbr, undefined);
   }
 

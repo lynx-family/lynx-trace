@@ -308,7 +308,7 @@ export class TraceAssistantPanel
       result.numRows() > 0
         ? result.firstRow({display_value: STR}).display_value
         : '';
-    return version >= '3.4';
+    return !version || version >= '3.4';
   };
 
   validateLLMConfig = (): boolean => {
