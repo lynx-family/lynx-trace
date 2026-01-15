@@ -36,6 +36,7 @@ import {getSlice, SliceDetails} from '../../components/sql_utils/slice';
 import {asArgSetId, asSliceSqlId} from '../../components/sql_utils/core_types';
 import {Arg, getArgs} from '../../components/sql_utils/args';
 import {eventLoggerState} from '../../event_logger';
+import {stringToJsonObject} from '../../lynx_perf/string_utils';
 
 /**
  * Pipeline Stage Interface
@@ -342,7 +343,10 @@ export class VitalTimestampDetailsPanel implements TrackEventDetailsPanel {
     if (!jsonTree) {
       return undefined;
     }
-    const rootElementAbbr = JSON.parse(jsonTree);
+    const rootElementAbbr = stringToJsonObject(jsonTree);
+    if (rootElementAbbr === undefined) {
+      return undefined;
+    }
     return reConstructElementTree(rootElementAbbr, undefined);
   }
 
