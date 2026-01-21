@@ -89,6 +89,12 @@ export const ROUTE_SCHEMA = z
      * the page will automatically focus on the specific LynxView.
      */
     focus_lynxviews: z.string().optional().catch(undefined),
+
+    /**
+     * If provided in route args, after loading the trace,
+     * the page will automatically show the UI tree and select this ui node.
+     */
+    uiTreeId: z.string().optional().catch(undefined),
   })
 
   // Allow arbitrary values to pass through, these may be forwarded to plugins.
