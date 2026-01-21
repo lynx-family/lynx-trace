@@ -235,6 +235,9 @@ async function loadTraceIntoEngine(
     if (app.initialRouteArgs.focus_lynxviews) {
       url += `&focus_lynxviews=${app.initialRouteArgs.focus_lynxviews}`;
     }
+    if (app.initialRouteArgs.uiTreeId) {
+      url += `&uiTreeId=${app.initialRouteArgs.uiTreeId}`;
+    }
     Router.navigate(url);
   } else {
     const cacheUuid = traceDetails.cached ? traceDetails.uuid : '';

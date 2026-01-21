@@ -4,16 +4,81 @@
 
 import { Component } from 'react';
 import ReactMarkdown from 'react-markdown';
+import m from 'mithril';
 import rehypeRaw from 'rehype-raw';
 import { Card } from 'antd';
 import { Router } from '../../../../core/router';
 import { AppImpl } from '../../../../core/app_impl';
+import { getSlice } from '../../../../components/sql_utils/slice';
+import { asSliceSqlId } from '../../../../components/sql_utils/core_types';
+import { stringToJsonObject } from '../../../../lynx_perf/string_utils';
+import { reConstructUITree } from '../../../../plugins/lynx.UITree/utils';
+import { closeModal, showModal } from '../../../../widgets/modal';
+import { UITreeMithrilView } from '../../../../lynx_perf/common_components/ui_tree/mithril_ui_tree';
+import { LynxUI } from '../../../../lynx_perf/common_components/ui_tree/types';
 
 interface AnalysisReportProps {
   analysisResult: string;
   extraActionArea?: React.ReactNode;
   status?: string;
 }
+
+export const showUITree = async (sliceId: string | null, uiTreeId: string | null) => {
+  if (!sliceId) {
+    return;
+  }
+  const engine = AppImpl.instance.trace?.engine;
+  if (!engine) {
+    return;
+  }
+  const slice = await getSlice(engine, asSliceSqlId(parseInt(sliceId)));
+  if (!slice) {
+    return;
+  }
+  // show ui tree dialog
+  const uiTreeDetail = slice.args?.find(
+    (arg) => arg.key === 'debug.detail' || arg.key === 'arg.detail',
+  );
+  if (uiTreeDetail != undefined) {
+    const content = uiTreeDetail.value as string;
+    const rootUITree = stringToJsonObject(content);
+    if (rootUITree === undefined) {
+      return;
+    }
+    const dfs = (ui: LynxUI): LynxUI | undefined => {
+      if (ui.id.toString() === uiTreeId) {
+        return ui;
+      }
+      if (ui.children) {
+        for (let i = 0; i < ui.children.length; i++) {
+          const r = dfs(ui.children[i]);
+          if (r) {
+            return r;
+          }
+        }
+        return undefined;
+      }
+      return undefined;
+    };
+
+    reConstructUITree(rootUITree, undefined);
+    const found = uiTreeId ? dfs(rootUITree) : rootUITree;
+    if (!found) {
+      return;
+    }
+    showModal({
+      title: 'UI Tree',
+      onClose: () => {
+        closeModal();
+      },
+      content: () =>
+        m(UITreeMithrilView, {
+          selectedUI: found,
+          rootUI: rootUITree as LynxUI,
+        }),
+    });
+  }
+};
 
 export class AnalysisReportComponent extends Component<AnalysisReportProps> {
   private markdownClick: (e: MouseEvent) => void;
@@ -24,7 +89,7 @@ export class AnalysisReportComponent extends Component<AnalysisReportProps> {
     this.markdownClick = this.handleMarkdownClick.bind(this);
   }
 
-  private handleMarkdownClick = (e: MouseEvent) => {
+  private handleMarkdownClick = async (e: MouseEvent) => {
     if (e.target && e.target instanceof HTMLElement && e.target.tagName === 'A') {
       const href = e.target.getAttribute('href');
 
@@ -36,6 +101,8 @@ export class AnalysisReportComponent extends Component<AnalysisReportProps> {
             scrollToSelection: true,
           });
         }
+        const uiTreeId = this.getUITreeIdFromUrl(href);
+        await showUITree(sliceId, uiTreeId);
       }
     }
   };
@@ -44,6 +111,15 @@ export class AnalysisReportComponent extends Component<AnalysisReportProps> {
     try {
       const router = Router.parseUrl(href);
       return router.args.sliceId ?? null;
+    } catch (error) {
+      return null;
+    }
+  };
+
+  private getUITreeIdFromUrl = (href: string) => {
+    try {
+      const router = Router.parseUrl(href);
+      return router.args.uiTreeId ?? null;
     } catch (error) {
       return null;
     }

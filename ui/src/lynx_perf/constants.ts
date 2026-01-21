@@ -27,6 +27,7 @@ export const LYNX_NATIVE_MODULE_ID = 'lynx.NativeModule';
 export const LYNX_BACKGROUND_THREAD_NAME = 'Lynx_JS';
 export const LYNX_FRAME_JANK_PLUGIN_ID = 'lynx.FrameJank';
 export const LYNX_SCROLL_PLUGIN_ID = 'lynx.ScrollDetect';
+export const LYNX_UI_TREE_PLUGIN_ID = 'lynx.UITree';
 
 export const SLICE_LAYOUT_FIT_CONTENT_DEFAULTS = Object.freeze({
   padding: 3,

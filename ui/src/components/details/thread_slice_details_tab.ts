@@ -50,6 +50,7 @@ import {
   NATIVEMODULE_CALL,
   DEPRECATED_NATIVEMODULE_CALL,
 } from '../../lynx_perf/constants';
+import {showUITree} from '../lynx_perf/right_sidebar/ai_analysis/analysis_report';
 
 interface ContextMenuItem {
   name: string;
@@ -197,6 +198,13 @@ const ITEMS: ContextMenuItem[] = [
         );
     },
   },
+  {
+    name: 'UI Tree',
+    shouldDisplay: (slice: SliceDetails) => slice.name === 'DumpUITreeLayout',
+    run: async (slice: SliceDetails, _trace: Trace) => {
+      await showUITree(slice.id.toString(), null);
+    },
+  },
 ];
 
 function getSliceContextMenuItems(slice: SliceDetails) {
@@ -286,7 +294,13 @@ export class ThreadSliceDetailsPanel implements TrackEventDetailsPanel {
     const screenshot = this.renderScreenshot();
     // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
     if (description ?? precFlows ?? followingFlows ?? args ?? screenshot) {
-      return m(GridLayoutColumn, screenshot ?? args, description, precFlows, followingFlows);
+      return m(
+        GridLayoutColumn,
+        screenshot ?? args,
+        description,
+        precFlows,
+        followingFlows,
+      );
     } else {
       return undefined;
     }
@@ -478,22 +492,28 @@ export class ThreadSliceDetailsPanel implements TrackEventDetailsPanel {
   }
 
   private renderScreenshot() {
-    if (this.sliceDetails?.name === "FSPSnapshotBase64Bitmap" && this.sliceDetails?.args) {
+    if (
+      this.sliceDetails?.name === 'FSPSnapshotBase64Bitmap' &&
+      this.sliceDetails?.args
+    ) {
       let data: string = '';
       let instanceId: string = '';
       this.sliceDetails.args.forEach((arg) => {
-        if (arg.key === 'debug.data' || arg.key === 'args.data' ) {
+        if (arg.key === 'debug.data' || arg.key === 'args.data') {
           data = arg.displayValue;
           data = data.replace(/\s+/g, '');
         } else if (arg.key === 'debug.instance_id' || arg.key === 'args.data') {
           instanceId = arg.displayValue;
         }
       });
-      const strictBase64Regex = /^data:image\/(png|jpeg|jpg|gif|webp|bmp|svg\+xml);base64,[A-Za-z0-9+/]*={0,2}$/;
+      const strictBase64Regex =
+        /^data:image\/(png|jpeg|jpg|gif|webp|bmp|svg\+xml);base64,[A-Za-z0-9+/]*={0,2}$/;
       if (data && strictBase64Regex.test(data)) {
         return m(
           Section,
-          {title: `Screenshot ${instanceId ? `instance_id: ${instanceId}`: ''}`},
+          {
+            title: `Screenshot ${instanceId ? `instance_id: ${instanceId}` : ''}`,
+          },
           m('img', {
             src: data,
             style: {
