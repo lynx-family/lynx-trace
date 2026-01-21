@@ -73,6 +73,7 @@ export interface IssueSummary extends BaseSlice {
   ts: number;
   issueRank: IssueRank;
   trackUri: string;
+  upid?: number | null;
 }
 
 export interface BaseSlice {

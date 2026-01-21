@@ -18,7 +18,7 @@
 
 import {Trace} from '../../public/trace';
 import {PerfettoPlugin} from '../../public/plugin';
-import {NUM, STR} from '../../trace_processor/query_result';
+import {NUM, NUM_NULL, STR} from '../../trace_processor/query_result';
 import {
   findDeeplyNestedNodesRecursively,
   findInvisibleNodesRecursively,
@@ -42,6 +42,13 @@ import {
 } from '../../lynx_perf/trace_utils';
 import {LynxElement} from '../../lynx_perf/common_components/element_tree/types';
 import {stringToJsonObject} from '../../lynx_perf/string_utils';
+import ProcessThreadGroupsPlugin from '../dev.perfetto.ProcessThreadGroups';
+import {isLynxBackgroundScriptThreadGroup} from '../../lynx_perf/track_utils';
+import {ThreadSortOrder} from '../../lynx_perf/thread_order';
+import {
+  addIssueTrackAboveVitalTimestamp,
+  getFirstIssueProcessGroup,
+} from '../../lynx_perf/issue_track_utils';
 
 /**
  * Lynx Element Performance Analysis Plugin
@@ -50,7 +57,7 @@ import {stringToJsonObject} from '../../lynx_perf/string_utils';
  */
 export default class LynxElementPlugin implements PerfettoPlugin {
   static readonly id = LYNX_PERF_ELEMENT_PLUGIN_ID;
-  static readonly dependencies = [LynxPerf];
+  static readonly dependencies = [LynxPerf, ProcessThreadGroupsPlugin];
   /**
    * Tracks problematic element nodes by instance_id
    * Key: instance_id
@@ -108,12 +115,7 @@ export default class LynxElementPlugin implements PerfettoPlugin {
       uri: LYNX_PERF_ELEMENT_PLUGIN_ID,
       renderer: new LynxElementIssueTrack(),
     });
-    ctx.defaultWorkspace.addChildInOrder(
-      new TrackNode({
-        uri: LYNX_PERF_ELEMENT_PLUGIN_ID,
-        name: 'Lynx Element Issues',
-      }),
-    );
+    this.addIssueTrack(ctx, domIssues);
   }
 
   /**
@@ -123,7 +125,18 @@ export default class LynxElementPlugin implements PerfettoPlugin {
    */
   async getIssueData(engine: Engine): Promise<IssueSummary[]> {
     const queryRes = await engine.query(
-      `select ts,id,dur,name, arg_set_id as argSetId from slice where slice.name='DumpElementTree' order by ts desc`,
+      `select
+        slice.ts,
+        slice.id,
+        slice.dur,
+        slice.name,
+        slice.arg_set_id as argSetId,
+        thread.upid
+      from slice
+      left join thread_track on slice.track_id = thread_track.id
+      left join thread using (utid)
+      where slice.name='DumpElementTree'
+      order by slice.ts desc`,
     );
     const it = queryRes.iter({
       argSetId: NUM,
@@ -131,6 +144,7 @@ export default class LynxElementPlugin implements PerfettoPlugin {
       id: NUM,
       dur: NUM,
       name: STR,
+      upid: NUM_NULL,
     });
     const data: IssueSummary[] = [];
 
@@ -167,10 +181,43 @@ export default class LynxElementPlugin implements PerfettoPlugin {
           tooltip: `Performance issue detected in the Element tree, click for more details`,
           trackUri: LYNX_PERF_ELEMENT_PLUGIN_ID,
           issueRank: IssueRank.MODERATE,
+          upid: it.upid,
         });
       }
     }
     return data;
+  }
+
+  private addIssueTrack(ctx: Trace, domIssues: IssueSummary[]) {
+    if (domIssues.length === 0) {
+      return;
+    }
+    const issueTrack = new TrackNode({
+      uri: LYNX_PERF_ELEMENT_PLUGIN_ID,
+      name: 'Lynx Element Issues',
+      sortOrder: ThreadSortOrder.PERFORMANCE_ISSUES,
+    });
+    const processGroup = this.getProcessGroupForIssues(ctx, domIssues);
+    if (processGroup !== undefined) {
+      addIssueTrackAboveVitalTimestamp(processGroup, issueTrack, domIssues);
+      return;
+    }
+    const lynxGroup = ctx.currentWorkspace.children.find((item) =>
+      isLynxBackgroundScriptThreadGroup(item),
+    );
+    if (lynxGroup !== undefined) {
+      addIssueTrackAboveVitalTimestamp(lynxGroup, issueTrack, domIssues);
+    }
+  }
+
+  private getProcessGroupForIssues(
+    ctx: Trace,
+    domIssues: IssueSummary[],
+  ): TrackNode | undefined {
+    const processGroups = ctx.plugins.getPlugin(ProcessThreadGroupsPlugin);
+    return getFirstIssueProcessGroup(domIssues, (upid) =>
+      processGroups.getGroupForProcess(upid),
+    );
   }
 
   /**

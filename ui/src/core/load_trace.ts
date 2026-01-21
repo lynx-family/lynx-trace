@@ -287,6 +287,9 @@ async function loadTraceIntoEngine(
     if (app.initialRouteArgs.focus_lynxviews) {
       routeParams.set('focus_lynxviews', app.initialRouteArgs.focus_lynxviews);
     }
+    if (app.initialRouteArgs.uiTreeId) {
+      routeParams.set('uiTreeId', app.initialRouteArgs.uiTreeId);
+    }
   } else {
     routeParams.set('local_cache_key', cacheUuid);
     if (app.initialRouteArgs.focus_lynxviews) {

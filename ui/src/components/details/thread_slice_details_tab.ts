@@ -68,6 +68,7 @@ import {
   NATIVEMODULE_CALL,
   DEPRECATED_NATIVEMODULE_CALL,
 } from '../../lynx_perf/constants';
+import {showUITree} from '../lynx_perf/right_sidebar/ai_analysis/analysis_report';
 
 interface ContextMenuItem {
   name: string;
@@ -198,6 +199,13 @@ const ITEMS: ContextMenuItem[] = [
             )}:${getThreadNameFromSlice(slice)})`,
           }),
         );
+    },
+  },
+  {
+    name: 'UI Tree',
+    shouldDisplay: (slice: SliceDetails) => slice.name === 'DumpUITreeLayout',
+    run: async (slice: SliceDetails, _trace: Trace) => {
+      await showUITree(slice.id.toString(), null);
     },
   },
 ];

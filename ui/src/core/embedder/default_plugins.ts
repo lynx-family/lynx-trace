@@ -109,4 +109,5 @@ export const defaultPlugins = [
   'lynx.ScrollDetect',
   'lynx.FocusMode',
   'lynx.AIAnalysis',
+  'lynx.UITree',
 ];
