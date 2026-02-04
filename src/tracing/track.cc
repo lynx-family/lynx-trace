@@ -34,7 +34,7 @@
 namespace perfetto {
 
 // static
-uint64_t Track::process_uuid;
+uint64_t Track::process_uuid = internal::TrackRegistry::ComputeProcessUuid();
 
 protos::gen::TrackDescriptor Track::Serialize() const {
   protos::gen::TrackDescriptor desc;
@@ -219,8 +219,6 @@ void TrackRegistry::InitializeInstance(std::optional<uint64_t> process_uuid) {
   instance_ = new TrackRegistry();
   if (process_uuid) {
     Track::process_uuid = *process_uuid;
-  } else {
-    Track::process_uuid = ComputeProcessUuid();
   }
 }
 
