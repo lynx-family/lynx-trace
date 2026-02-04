@@ -43101,7 +43101,7 @@ TracingPolicy::~TracingPolicy() = default;
 namespace perfetto {
 
 // static
-uint64_t Track::process_uuid;
+uint64_t Track::process_uuid = internal::TrackRegistry::ComputeProcessUuid();
 
 protos::gen::TrackDescriptor Track::Serialize() const {
   protos::gen::TrackDescriptor desc;
@@ -43275,7 +43275,6 @@ void TrackRegistry::InitializeInstance() {
   if (instance_)
     return;
   instance_ = new TrackRegistry();
-  Track::process_uuid = ComputeProcessUuid();
 }
 
 // static
