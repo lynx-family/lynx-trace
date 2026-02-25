@@ -12,9 +12,14 @@ import AIAnalysis from '../../../plugins/lynx.AIAnalysis';
 import {
   AnalysisReport,
   AnalysisStep,
+  EventData,
   llmState,
   StepListener,
 } from '../../../lynx_perf/llm_state';
+import {
+  convertEventDataArrayToAnalysisSteps,
+  updateAnalysisSteps,
+} from '../../../lynx_perf/analysis_step_utils';
 import {STR} from '../../../trace_processor/query_result';
 import {eventLoggerState} from '../../../event_logger';
 
@@ -34,12 +39,13 @@ export class TraceAssistantPanel
 {
   constructor(props: {}) {
     super(props);
+    const analysisSteps = llmState.state.traceAnalysis?.analysisSteps() ?? [];
     this.state = {
-      status: 'initial',
+      status: analysisSteps.length > 0 ? 'analyzing' : 'initial',
       analysisResult: '',
       extraActionArea: undefined,
       extraActionProperties: {},
-      analysisSteps: [],
+      analysisSteps,
       validationError: '',
       isValidationPassed: false,
     };
@@ -85,19 +91,24 @@ export class TraceAssistantPanel
     try {
       const prevAnalysisResult =
         await llmState.state.reportExtraAction?.getHistoryAnalysisReport();
-      if (prevAnalysisResult && this.state.status == 'initial') {
+      if (prevAnalysisResult && this.state.status === 'initial') {
         console.log('prevAnalysisResult', JSON.stringify(prevAnalysisResult));
+        const analysisSteps = this.normalizeAnalysisSteps(prevAnalysisResult);
         const extraActionArea = await llmState.state.reportExtraAction?.render(
           undefined,
           undefined,
           prevAnalysisResult.extraActionProperties,
         );
+        const resultWithLinks = prevAnalysisResult.analysisResult.replace(
+          /`?\[(.*?)\]\((?:id: ?)?(\d+)\)`?/g,
+          `[$1](${window.location.href}&sliceId=$2)`,
+        );
         this.setState({
           ...this.state,
           status: 'completed',
-          analysisResult: prevAnalysisResult.analysisResult,
-          analysisSteps: prevAnalysisResult.analysisSteps,
-          extraActionArea: extraActionArea,
+          analysisResult: resultWithLinks,
+          analysisSteps,
+          extraActionArea,
           extraActionProperties: prevAnalysisResult.extraActionProperties,
         });
       } else if (
@@ -108,6 +119,8 @@ export class TraceAssistantPanel
           draft.pendingStartAnalysis = false;
         });
         this.startAnalysis();
+      } else if (this.state.status === 'analyzing') {
+        this.handleAnalysis();
       }
     } catch (error) {
       console.error('restore prev report status failed : ', error);
@@ -129,7 +142,6 @@ export class TraceAssistantPanel
     const modelName = AIAnalysis.modelNameSetting.get();
     const apiKey = AIAnalysis.APIKeySetting.get();
     const baseUrl = AIAnalysis.baseUrlSetting.get();
-    // if llm config is not set through settings page, use default config
     if (!modelProvider && !modelName && !apiKey && !baseUrl) {
       return llmState.state.config;
     }
@@ -141,6 +153,15 @@ export class TraceAssistantPanel
     };
   };
 
+  private normalizeAnalysisSteps(report: AnalysisReport): AnalysisStep[] {
+    if (report.extraActionProperties.version?.toUpperCase() === 'V2') {
+      return convertEventDataArrayToAnalysisSteps(
+        report.analysisSteps as EventData[],
+      );
+    }
+    return report.analysisSteps as AnalysisStep[];
+  }
+
   onStepUpdate = (
     stepId: string,
     title: string,
@@ -148,113 +169,16 @@ export class TraceAssistantPanel
     content: string,
     childStepId: string = '',
   ) => {
-    const isMatch = (step: AnalysisStep, id: string) => step.id === id;
-
-    const isAnalysisStep = (detail: unknown): detail is AnalysisStep =>
-      detail !== null && typeof detail === 'object';
-
-    const addOrUpdateChild = (
-      parent: AnalysisStep,
-      childId: string,
-    ): AnalysisStep => {
-      const details = parent.details || [];
-      const idx = details.findIndex(
-        (detail) => isAnalysisStep(detail) && detail.id === childId,
-      );
-      if (idx === -1) {
-        const newChild: AnalysisStep = {
-          id: childId,
-          title,
-          status,
-          details: content ? [content] : [],
-          collapsed: false,
-        };
-        return {
-          ...parent,
-          details: [...details, newChild],
-        };
-      } else {
-        const child = details[idx] as AnalysisStep;
-        const updatedChild: AnalysisStep = {
-          ...child,
-          status,
-          details: content ? [...child.details, content] : child.details,
-        };
-        const newDetails = [...details];
-        newDetails[idx] = updatedChild;
-        return {
-          ...parent,
-          details: newDetails,
-        };
-      }
-    };
-
-    const updateStep = (
-      step: AnalysisStep,
-    ): {step: AnalysisStep; found: boolean} => {
-      // If current step matches the target stepId, update here
-      if (isMatch(step, stepId)) {
-        if (childStepId) {
-          return {step: addOrUpdateChild(step, childStepId), found: true};
-        }
-        return {
-          step: {
-            ...step,
-            status,
-            details: content ? [...step.details, content] : step.details,
-          },
-          found: true,
-        };
-      }
-
-      // Otherwise, traverse nested details and update the matching child at the correct position
-      if (Array.isArray(step.details) && step.details.length > 0) {
-        let found = false;
-        const newDetails = step.details.map((detail) => {
-          if (isAnalysisStep(detail)) {
-            const res = updateStep(detail);
-            if (res.found) found = true;
-            return res.step; // replace only this child
-          }
-          return detail; // keep non-AnalysisStep entries as-is
-        });
-        if (found) {
-          return {step: {...step, details: newDetails}, found: true};
-        }
-      }
-      return {step, found: false};
-    };
-
-    const updateAtAnyDepth = (
-      steps: AnalysisStep[],
-    ): {updated: AnalysisStep[]; found: boolean} => {
-      let found = false;
-      const updated = steps.map((step) => {
-        if (found) return step;
-        const res = updateStep(step);
-        if (res.found) {
-          found = true;
-          return res.step;
-        }
-        return step;
-      });
-      return {updated, found};
-    };
-
     this.setState((prevState) => {
-      const {updated, found} = updateAtAnyDepth(prevState.analysisSteps);
-      if (found) {
-        return {analysisSteps: updated};
-      }
-      // Not found anywhere: add as a new top-level step
-      const newStep: AnalysisStep = {
-        id: stepId,
+      const updatedSteps = updateAnalysisSteps(
+        prevState.analysisSteps,
+        stepId,
         title,
         status,
-        details: content ? [content] : [],
-        collapsed: false,
-      };
-      return {analysisSteps: [...prevState.analysisSteps, newStep]};
+        content,
+        childStepId,
+      );
+      return {analysisSteps: updatedSteps};
     });
   };
 
@@ -271,38 +195,43 @@ export class TraceAssistantPanel
         analysisSteps: [],
       },
       async () => {
-        try {
-          const report = await llmState.state.traceAnalysis?.analysis(this);
-          if (report) {
-            this.setState(
-              {
-                status: 'completed',
-                analysisResult: report.analysisResult,
-                analysisSteps: report.analysisSteps,
-                extraActionArea: report.extraActionArea,
-                extraActionProperties: report.extraActionProperties,
-              },
-              async () => {
-                await this.saveCurrentReportStatus();
-              },
-            );
-            eventLoggerState.state.eventLogger.logEvent(
-              'ai_analysis_show_report',
-              {},
-            );
-            return;
-          }
-        } catch (error) {
-          console.error('AI analysis request failed:', error);
-          this.setState({
-            status: 'completed',
-            analysisResult: 'Analysis failed, please try again later.',
-            extraActionArea: undefined,
-          });
-        }
+        this.handleAnalysis();
       },
     );
   };
+
+  private async handleAnalysis() {
+    try {
+      const report = await llmState.state.traceAnalysis?.analysis(this);
+      if (report) {
+        const reportSteps = this.normalizeAnalysisSteps(report);
+        this.setState(
+          {
+            status: 'completed',
+            analysisResult: report.analysisResult,
+            analysisSteps: reportSteps,
+            extraActionArea: report.extraActionArea,
+            extraActionProperties: report.extraActionProperties,
+          },
+          async () => {
+            await this.saveCurrentReportStatus();
+          },
+        );
+        eventLoggerState.state.eventLogger.logEvent(
+          'ai_analysis_show_report',
+          {},
+        );
+        return;
+      }
+    } catch (error) {
+      console.error('AI analysis request failed:', error);
+      this.setState({
+        status: 'completed',
+        analysisResult: 'Analysis failed, please try again later.',
+        extraActionArea: undefined,
+      });
+    }
+  }
 
   validateLynxVersion = async (): Promise<boolean> => {
     const engine = AppImpl.instance.trace?.engine;
@@ -342,6 +271,7 @@ export class TraceAssistantPanel
       analysisSteps: [],
     });
   };
+
   renderContent = () => {
     const {status} = this.state;
     const modelChoosePanel = llmState.state.modelChoosePanel || (
@@ -410,6 +340,7 @@ export class TraceAssistantPanel
                 </div>
               )}
             </div>
+
             {modelChoosePanel}
           </div>
         );
@@ -429,6 +360,7 @@ export class TraceAssistantPanel
             {modelChoosePanel}
           </div>
         );
+
       case 'completed':
         return (
           <div
@@ -442,7 +374,6 @@ export class TraceAssistantPanel
               <AnalysisProcess steps={this.state.analysisSteps} />
             </div>
 
-            {/* Report */}
             <div style={{marginBottom: '24px'}}>
               <AnalysisReportComponent
                 analysisResult={this.state.analysisResult}
@@ -451,7 +382,6 @@ export class TraceAssistantPanel
               />
             </div>
 
-            {/* Operation Area */}
             <div
               style={{
                 display: 'flex',

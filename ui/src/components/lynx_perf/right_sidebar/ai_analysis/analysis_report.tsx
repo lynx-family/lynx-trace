@@ -4,6 +4,7 @@
 
 import {Component} from 'react';
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import m from 'mithril';
 import rehypeRaw from 'rehype-raw';
 import {Card} from 'antd';
@@ -205,6 +206,7 @@ export class AnalysisReportComponent extends Component<AnalysisReportProps> {
               maxWidth: '100%',
             }}>
             <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
               rehypePlugins={[rehypeRaw]}
               components={{
                 h2: ({children}: MarkdownChildrenProps) => (

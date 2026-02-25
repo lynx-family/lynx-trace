@@ -55,6 +55,7 @@
     "openai": "4.92.0",
     "react-markdown": "^10.1.0",
     "rehype-raw": "^7.0.0",
+    "remark-gfm": "^4.0.1",
     "util": "^0.12.5",
     "uuid": "^10.0.0",
     "vega": "^5.30.0",
