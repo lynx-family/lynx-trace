@@ -4,6 +4,41 @@
 
 import {createStore} from '../base/store';
 
+type ProgressEventType =
+  | 'agent_start'
+  | 'agent_end'
+  | 'tool_call'
+  | 'error'
+  | 'finish';
+
+type ProgressEventDetails = {
+  agent_start: {initialMessages?: Array<{role: string; content: unknown}>};
+  agent_end: {result?: unknown};
+  tool_call: {
+    args: Record<string, unknown>;
+    result?: unknown;
+    error?: unknown;
+    toolName: string;
+  };
+  error: {errorMessage: string};
+  finish: {result: string};
+};
+
+interface ProgressEvent<T extends ProgressEventType = ProgressEventType> {
+  type: T;
+  agentId: string;
+  parentAgentId?: string;
+  agentName: string;
+  details: T extends keyof ProgressEventDetails
+    ? ProgressEventDetails[T]
+    : Record<string, unknown>;
+}
+
+export interface EventData {
+  timestamp: number;
+  event: ProgressEvent;
+}
+
 export interface LLMConfig {
   modelProvider: string;
   modelName: string;
@@ -33,7 +68,7 @@ export interface StepListener {
 export interface AnalysisReport {
   analysisResult: string;
   extraActionProperties: Record<string, string>;
-  analysisSteps: AnalysisStep[];
+  analysisSteps: AnalysisStep[] | EventData[];
   extraActionArea?: React.ReactNode;
 }
 
@@ -53,6 +88,7 @@ export interface ReportExtraAction {
 
 export interface TraceAnalysis {
   analysis(stepListener: StepListener): Promise<AnalysisReport | undefined>;
+  analysisSteps(): AnalysisStep[];
 }
 
 interface State {
