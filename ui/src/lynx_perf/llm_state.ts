@@ -63,6 +63,7 @@ interface State {
   modelChoosePanel: React.ReactNode | undefined;
   reportExtraAction: ReportExtraAction | undefined;
   traceAnalysis: TraceAnalysis | undefined;
+  pendingStartAnalysis: boolean;
 }
 
 const emptyState: State = {
@@ -77,6 +78,7 @@ const emptyState: State = {
   modelChoosePanel: undefined,
   reportExtraAction: undefined,
   traceAnalysis: undefined,
+  pendingStartAnalysis: false,
 };
 
 export const llmState = createStore<State>(emptyState);

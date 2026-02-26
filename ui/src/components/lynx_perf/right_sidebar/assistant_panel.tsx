@@ -100,6 +100,14 @@ export class TraceAssistantPanel
           extraActionArea: extraActionArea,
           extraActionProperties: prevAnalysisResult.extraActionProperties,
         });
+      } else if (
+        this.state.status === 'initial' &&
+        llmState.state.pendingStartAnalysis
+      ) {
+        llmState.edit((draft) => {
+          draft.pendingStartAnalysis = false;
+        });
+        this.startAnalysis();
       }
     } catch (error) {
       console.error('restore prev report status failed : ', error);
