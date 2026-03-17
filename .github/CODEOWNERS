@@ -10,22 +10,15 @@
 # This file define code owners for GitHub pull requests
 # NOTE: The last matching rule is the one that defines the owner.
 
-# General repo-wide owners
-* @google/perfetto-team
+* @KananSu @KingAlen @lynx-family
 
 # Files/Directories that don't require a strict owner check.
 /Android.bp
 /Android.bp.extras
 /BUILD
 /BUILD.*
-/docs/**/*
 /examples/**/*
-/protos/perfetto/trace/**/*
-/protos/perfetto/config/**/*
-/protos/perfetto/metrics/**/*
-/ui/src/plugins/**/*
 /ui/src/test/**/*
-/tools/**/*
 /test/**/*
 
 # ============================================================================
