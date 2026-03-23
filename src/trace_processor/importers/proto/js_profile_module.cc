@@ -50,7 +50,7 @@ struct ProfileEvent {
 };
 
 // Merge or create profile data in cache.
-CpuProfileData MergeProfileData(
+static CpuProfileData MergeProfileData(
     int32_t profile_id,
     const protos::pbzero::JSProfilePacket_Decoder& decoder,
     base::FlatHashMap<int32_t, CpuProfileData>& cpu_profiles_) {
@@ -70,8 +70,8 @@ CpuProfileData MergeProfileData(
   return data;
 }
 
-base::Status ParseCallFrame(json::SimpleJsonParser& reader,
-                            CallFrame& call_frame) {
+static base::Status ParseCallFrame(json::SimpleJsonParser& reader,
+                                   CallFrame& call_frame) {
   return reader.ForEachField([&](std::string_view key) -> json::FieldResult {
     if (key == "functionName") {
       if (auto s = reader.GetString()) {
@@ -102,9 +102,9 @@ base::Status ParseCallFrame(json::SimpleJsonParser& reader,
   });
 }
 
-base::Status ParseNode(json::SimpleJsonParser& reader,
-                       CpuProfile& cpu_profile,
-                       std::map<int32_t, ProfileNode>& node_map) {
+static base::Status ParseNode(json::SimpleJsonParser& reader,
+                              CpuProfile& cpu_profile,
+                              std::map<int32_t, ProfileNode>& node_map) {
   ProfileNode profile_node;
   profile_node.parent = -1;
   profile_node.depth = -1;
@@ -139,9 +139,9 @@ base::Status ParseNode(json::SimpleJsonParser& reader,
   return base::OkStatus();
 }
 
-base::Status ParseNodes(json::SimpleJsonParser& reader,
-                        CpuProfile& cpu_profile,
-                        std::map<int32_t, ProfileNode>& node_map) {
+static base::Status ParseNodes(json::SimpleJsonParser& reader,
+                               CpuProfile& cpu_profile,
+                               std::map<int32_t, ProfileNode>& node_map) {
   RETURN_IF_ERROR(reader.ForEachArrayElement([&]() {
     if (!reader.IsObject()) {
       return base::OkStatus();
@@ -154,9 +154,9 @@ base::Status ParseNodes(json::SimpleJsonParser& reader,
   return base::OkStatus();
 }
 
-base::Status ParseProfile(json::SimpleJsonParser& reader,
-                          CpuProfile& cpu_profile,
-                          std::map<int32_t, ProfileNode>& node_map) {
+static base::Status ParseProfile(json::SimpleJsonParser& reader,
+                                 CpuProfile& cpu_profile,
+                                 std::map<int32_t, ProfileNode>& node_map) {
   RETURN_IF_ERROR(
       reader.ForEachField([&](std::string_view key) -> json::FieldResult {
         if (key == "startTime") {
@@ -195,9 +195,9 @@ base::Status ParseProfile(json::SimpleJsonParser& reader,
   return base::OkStatus();
 }
 
-base::Status ParseProfileJson(std::string_view json_str,
-                              CpuProfile& cpu_profile,
-                              std::map<int32_t, ProfileNode>& node_map) {
+static base::Status ParseProfileJson(std::string_view json_str,
+                                     CpuProfile& cpu_profile,
+                                     std::map<int32_t, ProfileNode>& node_map) {
   json::SimpleJsonParser reader(json_str);
   RETURN_IF_ERROR(reader.Parse());
   return reader.ForEachField([&](std::string_view key) -> json::FieldResult {
@@ -210,11 +210,11 @@ base::Status ParseProfileJson(std::string_view json_str,
 }
 
 // Find special node IDs: garbage collector, program, idle, and root.
-void FindSpecialNodeIds(const std::map<int32_t, ProfileNode>& node_map,
-                        int32_t& gcNodeId,
-                        int32_t& programNodeId,
-                        int32_t& idleNodeId,
-                        int32_t& rootId) {
+static void FindSpecialNodeIds(const std::map<int32_t, ProfileNode>& node_map,
+                               int32_t& gcNodeId,
+                               int32_t& programNodeId,
+                               int32_t& idleNodeId,
+                               int32_t& rootId) {
   gcNodeId = programNodeId = idleNodeId = rootId = -1;
   for (const auto& kv : node_map) {
     const auto& fn = kv.second.call_frame.function_name;
@@ -230,12 +230,12 @@ void FindSpecialNodeIds(const std::map<int32_t, ProfileNode>& node_map,
 }
 
 // Fix missing samples in the profile.
-void FixMissingSamples(CpuProfile& cpu_profile,
-                       int32_t programNodeId,
-                       int32_t gcNodeId,
-                       int32_t idleNodeId,
-                       int32_t rootId,
-                       const std::map<int32_t, ProfileNode>& node_map) {
+static void FixMissingSamples(CpuProfile& cpu_profile,
+                              int32_t programNodeId,
+                              int32_t gcNodeId,
+                              int32_t idleNodeId,
+                              int32_t rootId,
+                              const std::map<int32_t, ProfileNode>& node_map) {
   size_t samplesCount = cpu_profile.samples.size();
   if (programNodeId != -1 && samplesCount >= 3) {
     auto isSystemNode = [&programNodeId, &gcNodeId,
@@ -269,7 +269,8 @@ void FixMissingSamples(CpuProfile& cpu_profile,
 }
 
 // Calculate depth and parent for each node.
-void CalculateNodeDepthAndParent(std::map<int32_t, ProfileNode>& node_map) {
+static void CalculateNodeDepthAndParent(
+    std::map<int32_t, ProfileNode>& node_map) {
   for (auto it_node = node_map.begin(); it_node != node_map.end(); it_node++) {
     int32_t id = it_node->first;
     auto childs = it_node->second.children;
@@ -285,7 +286,7 @@ void CalculateNodeDepthAndParent(std::map<int32_t, ProfileNode>& node_map) {
 }
 
 // Generate a list of ProfileEvent from samples and nodes.
-std::vector<ProfileEvent> GenerateProfileEvents(
+static std::vector<ProfileEvent> GenerateProfileEvents(
     const CpuProfile& cpu_profile,
     const std::map<int32_t, ProfileNode>& node_map,
     int32_t gcNodeId) {
@@ -365,11 +366,12 @@ std::vector<ProfileEvent> GenerateProfileEvents(
 }
 
 // Emit ProfileEvents as TracePackets.
-void EmitProfileEventsToTrace(const std::vector<ProfileEvent>& events,
-                              const std::map<int32_t, ProfileNode>& node_map,
-                              const CpuProfile& cpu_profile,
-                              RefPtr<PacketSequenceStateGeneration> state,
-                              ProtoImporterModuleContext* module_context) {
+static void EmitProfileEventsToTrace(
+    const std::vector<ProfileEvent>& events,
+    const std::map<int32_t, ProfileNode>& node_map,
+    const CpuProfile& cpu_profile,
+    RefPtr<PacketSequenceStateGeneration> state,
+    ProtoImporterModuleContext* module_context) {
   std::stack<ProfileEvent> event_stack;
   for (const auto& event : events) {
     auto node = node_map.find(event.id_);

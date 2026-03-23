@@ -53,7 +53,7 @@ jobs:
             tools/install-build-deps ${{ matrix.install-deps-args }}
           fi
 
-      - name: Install ccache and binutils (Linux/macOS)
+      - name: Install ccache, binutils and python3-venv (Linux/macOS)
         if: runner.os != 'Windows'
         shell: bash
         run: |
@@ -61,7 +61,7 @@ jobs:
             brew install ccache
           else
             sudo apt-get update
-            sudo apt-get install -y ccache binutils
+            sudo apt-get install -y ccache binutils python3-venv
           fi
 
       - name: Setup ccache (Linux/macOS)
@@ -76,7 +76,7 @@ jobs:
       - name: Build trace_processor_shell (Linux/macOS)
         if: runner.os != 'Windows'
         run: |
-          GN_ARGS="is_debug=false is_clang=true cc_wrapper=\"ccache\""
+          GN_ARGS="is_debug=false is_clang=true cc_wrapper=\"ccache\" symbol_level=0"
           if [ "${{ matrix.arch }}" != "x64" ]; then
             GN_ARGS="$GN_ARGS target_cpu=\"${{ matrix.target-cpu }}\""
           fi
@@ -94,21 +94,14 @@ jobs:
         if: runner.os != 'Windows'
         run: |
           BINARY_PATH=out/release/trace_processor_shell
-          if [ -f out/release/gcc_like_host/trace_processor_shell ]; then
-            BINARY_PATH=out/release/gcc_like_host/trace_processor_shell
-          fi
           cp $BINARY_PATH ${{ matrix.binary-name }}
           chmod +x ${{ matrix.binary-name }}
-          strip ${{ matrix.binary-name }}
 
       - name: Find and rename binary (Windows)
         if: runner.os == 'Windows'
         shell: bash
         run: |
           BINARY_PATH=out/release/trace_processor_shell.exe
-          if [ -f out/release/gcc_like_host/trace_processor_shell.exe ]; then
-            BINARY_PATH=out/release/gcc_like_host/trace_processor_shell.exe
-          fi
           cp $BINARY_PATH ${{ matrix.binary-name }}
 
       - name: Generate SHA256 hash
@@ -153,9 +146,18 @@ jobs:
       - name: List artifacts
         run: ls -la artifacts/
 
+      - name: Generate tag name
+        id: generate-tag
+        run: |
+          TAG_NAME="trace_processor_shell-${GITHUB_SHA::7}"
+          echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
+          echo "release_name=trace_processor_shell build ${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
+          tag_name: ${{ steps.generate-tag.outputs.tag_name }}
+          name: ${{ steps.generate-tag.outputs.release_name }}
           files: |
             artifacts/*/trace_processor_shell_*
           draft: false
