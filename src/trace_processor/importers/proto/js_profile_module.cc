@@ -46,7 +46,7 @@ struct ProfileEvent {
 };
 
 // Merge or create profile data in cache.
-CpuProfileData MergeProfileData(
+static CpuProfileData MergeProfileData(
     int32_t profile_id,
     const protos::pbzero::JSProfilePacket_Decoder& decoder,
     base::FlatHashMap<int32_t, CpuProfileData>& cpu_profiles_) {
@@ -67,7 +67,7 @@ CpuProfileData MergeProfileData(
 }
 
 // Parse 'samples' and 'timeDeltas' arrays from JSON.
-bool ParseSamplesAndTimeDeltas(const Json::Value& runtime_profile,
+static bool ParseSamplesAndTimeDeltas(const Json::Value& runtime_profile,
                                CpuProfile& cpu_profile,
                                TraceProcessorContext* context_) {
   const Json::Value& samples = runtime_profile["samples"];
@@ -92,7 +92,7 @@ bool ParseSamplesAndTimeDeltas(const Json::Value& runtime_profile,
 }
 
 // Parse profile JSON and fill basic information.
-bool ParseProfileJson(const Json::Value& runtime_profile,
+static bool ParseProfileJson(const Json::Value& runtime_profile,
                       CpuProfile& cpu_profile,
                       TraceProcessorContext* context_) {
   cpu_profile.start_timestamp = runtime_profile["startTime"].asInt64();
@@ -101,7 +101,7 @@ bool ParseProfileJson(const Json::Value& runtime_profile,
 }
 
 // Parse 'nodes' array and build node map.
-bool ParseNodes(const Json::Value& runtime_profile,
+static bool ParseNodes(const Json::Value& runtime_profile,
                 CpuProfile& cpu_profile,
                 std::map<int32_t, ProfileNode>& node_map) {
   const Json::Value& nodes = runtime_profile["nodes"];
@@ -142,7 +142,7 @@ bool ParseNodes(const Json::Value& runtime_profile,
 }
 
 // Find special node IDs: garbage collector, program, idle, and root.
-void FindSpecialNodeIds(const std::map<int32_t, ProfileNode>& node_map,
+static void FindSpecialNodeIds(const std::map<int32_t, ProfileNode>& node_map,
                         int32_t& gcNodeId,
                         int32_t& programNodeId,
                         int32_t& idleNodeId,
@@ -162,7 +162,7 @@ void FindSpecialNodeIds(const std::map<int32_t, ProfileNode>& node_map,
 }
 
 // Fix missing samples in the profile.
-void FixMissingSamples(CpuProfile& cpu_profile,
+static void FixMissingSamples(CpuProfile& cpu_profile,
                        int32_t programNodeId,
                        int32_t gcNodeId,
                        int32_t idleNodeId,
@@ -201,7 +201,7 @@ void FixMissingSamples(CpuProfile& cpu_profile,
 }
 
 // Calculate depth and parent for each node.
-void CalculateNodeDepthAndParent(std::map<int32_t, ProfileNode>& node_map) {
+static void CalculateNodeDepthAndParent(std::map<int32_t, ProfileNode>& node_map) {
   for (auto it_node = node_map.begin(); it_node != node_map.end(); it_node++) {
     int32_t id = it_node->first;
     auto childs = it_node->second.children;
@@ -217,7 +217,7 @@ void CalculateNodeDepthAndParent(std::map<int32_t, ProfileNode>& node_map) {
 }
 
 // Generate a list of ProfileEvent from samples and nodes.
-std::vector<ProfileEvent> GenerateProfileEvents(
+static std::vector<ProfileEvent> GenerateProfileEvents(
     const CpuProfile& cpu_profile,
     const std::map<int32_t, ProfileNode>& node_map,
     int32_t gcNodeId) {
@@ -297,7 +297,7 @@ std::vector<ProfileEvent> GenerateProfileEvents(
 }
 
 // Emit ProfileEvents as TracePackets.
-void EmitProfileEventsToTrace(const std::vector<ProfileEvent>& events,
+static void EmitProfileEventsToTrace(const std::vector<ProfileEvent>& events,
                               const std::map<int32_t, ProfileNode>& node_map,
                               const CpuProfile& cpu_profile,
                               RefPtr<PacketSequenceStateGeneration> state,
