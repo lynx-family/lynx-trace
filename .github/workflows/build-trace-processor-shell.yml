@@ -1,0 +1,164 @@
+# Copyright 2025 The Lynx Authors. All rights reserved.
+# Licensed under the Apache License Version 2.0 that can be found in the
+# LICENSE file in the root directory of this source tree.
+
+name: Build trace_processor_shell
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build trace_processor_shell
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            arch: arm64
+            target-cpu: arm64
+            binary-name: trace_processor_shell_darwin_arm64
+            install-deps-args: ''
+          - os: macos-14-large
+            arch: x64
+            target-cpu: x64
+            binary-name: trace_processor_shell_darwin_x64
+            install-deps-args: ''
+          - os: ubuntu-latest
+            arch: x64
+            target-cpu: x64
+            binary-name: trace_processor_shell_linux_x64
+            install-deps-args: ''
+          - os: ubuntu-latest
+            arch: arm64
+            target-cpu: arm64
+            binary-name: trace_processor_shell_linux_arm64
+            install-deps-args: '--linux-arm'
+          - os: windows-latest
+            arch: x64
+            target-cpu: x64
+            binary-name: trace_processor_shell_win32.exe
+            install-deps-args: ''
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            python tools/install-build-deps ${{ matrix.install-deps-args }}
+          else
+            tools/install-build-deps ${{ matrix.install-deps-args }}
+          fi
+
+      - name: Install ccache and binutils (Linux/macOS)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            brew install ccache
+          else
+            sudo apt-get update
+            sudo apt-get install -y ccache binutils
+          fi
+
+      - name: Setup ccache (Linux/macOS)
+        if: runner.os != 'Windows'
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: ccache-${{ matrix.os }}-${{ matrix.arch }}-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ matrix.os }}-${{ matrix.arch }}-
+
+      - name: Build trace_processor_shell (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: |
+          GN_ARGS="is_debug=false is_clang=true cc_wrapper=\"ccache\""
+          if [ "${{ matrix.arch }}" != "x64" ]; then
+            GN_ARGS="$GN_ARGS target_cpu=\"${{ matrix.target-cpu }}\""
+          fi
+          tools/gn gen out/release --args="$GN_ARGS"
+          tools/ninja -C out/release trace_processor_shell
+
+      - name: Build trace_processor_shell (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          python tools/gn gen out/release --args="is_debug=false"
+          python tools/ninja -C out/release trace_processor_shell
+
+      - name: Find and rename binary (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: |
+          BINARY_PATH=out/release/trace_processor_shell
+          if [ -f out/release/gcc_like_host/trace_processor_shell ]; then
+            BINARY_PATH=out/release/gcc_like_host/trace_processor_shell
+          fi
+          cp $BINARY_PATH ${{ matrix.binary-name }}
+          chmod +x ${{ matrix.binary-name }}
+          strip ${{ matrix.binary-name }}
+
+      - name: Find and rename binary (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          BINARY_PATH=out/release/trace_processor_shell.exe
+          if [ -f out/release/gcc_like_host/trace_processor_shell.exe ]; then
+            BINARY_PATH=out/release/gcc_like_host/trace_processor_shell.exe
+          fi
+          cp $BINARY_PATH ${{ matrix.binary-name }}
+
+      - name: Generate SHA256 hash
+        shell: bash
+        run: |
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            certutil -hashfile ${{ matrix.binary-name }} SHA256 | grep -v "CertUtil" | grep -v "^$" | tr -d ' ' > ${{ matrix.binary-name }}.sha256
+          elif [ "${{ runner.os }}" = "macOS" ]; then
+            shasum -a 256 ${{ matrix.binary-name }} | awk '{print $1}' > ${{ matrix.binary-name }}.sha256
+          else
+            sha256sum ${{ matrix.binary-name }} | awk '{print $1}' > ${{ matrix.binary-name }}.sha256
+          fi
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.binary-name }}
+          path: ${{ matrix.binary-name }}
+
+      - name: Upload SHA256 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.binary-name }}.sha256
+          path: ${{ matrix.binary-name }}.sha256
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: List artifacts
+        run: ls -la artifacts/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            artifacts/*/trace_processor_shell_*
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
