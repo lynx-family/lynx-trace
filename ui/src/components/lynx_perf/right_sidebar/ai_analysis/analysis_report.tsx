@@ -213,6 +213,47 @@ export class AnalysisReportComponent extends Component<AnalysisReportProps> {
                     </a>
                   );
                 },
+                pre: ({ children }: any) => (
+                  <pre style={{
+                    width: '100%',
+                    maxWidth: '100%',
+                    overflowX: 'auto',
+                    whiteSpace: 'pre-wrap',
+                    wordWrap: 'break-word',
+                    wordBreak: 'break-all',
+                    boxSizing: 'border-box',
+                    padding: '12px',
+                    margin: '8px 0',
+                    backgroundColor: '#f5f5f5',
+                    borderRadius: '4px'
+                  }}>
+                    {children}
+                  </pre>
+                ),
+                code: ({ inline, className, children }: any) => {
+                  return !inline ? (
+                    <code style={{
+                      display: 'block',
+                      width: '100%',
+                      maxWidth: '100%',
+                      wordBreak: 'break-all',
+                      overflowWrap: 'break-word',
+                      whiteSpace: 'pre-wrap',
+                      boxSizing: 'border-box'
+                    }} className={className}>
+                      {children}
+                    </code>
+                  ) : (
+                    <code style={{
+                      wordBreak: 'break-all',
+                      overflowWrap: 'break-word',
+                      whiteSpace: 'pre-wrap',
+                      boxSizing: 'border-box'
+                    }} className={className}>
+                      {children}
+                    </code>
+                  );
+                },
               }}
             >
               {analysisResult}
