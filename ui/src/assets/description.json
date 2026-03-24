@@ -1862,5 +1862,10 @@
         "name": "LynxFrameView.updateLayout",
         "description": "Update LynxFrameView's layout.",
         "historyName": ""
+    },
+    {
+        "name": "LynxFrameView.setLayoutMode",
+        "description": "Set LynxFrameView's layout mode.",
+        "historyName": ""
     }
 ]
