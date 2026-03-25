@@ -1,0 +1,131 @@
+---
+name: {{SKILL_NAME}}
+description: |
+{{SKILL_DESCRIPTION}}
+---
+
+{{SKILL_INSTRUCTION}}
+
+## Appendix
+
+### Tool Usage
+
+The tools in this Skill can be invoked via the following CLI commands without additional configuration (e.g., MCP):
+
+#### Available Commands
+
+| Command | Description |
+|---------|-------------|
+| `id` | Execute trace query by slice ID |
+| `time-window` | Execute time window query |
+| `aggregate` | Execute aggregate query |
+| `ancestors` | Query ancestors of a slice |
+| `descendants` | Query descendants of a slice |
+| `flow` | Query flow events of a slice |
+| `metadata` | Query trace metadata |
+| `lynxview` | Query LynxView instances |
+| `pipeline` | Query pipeline IDs for an instance |
+| `pipeline-overview` | Query pipeline overview events |
+| `metrics` | Query Lynx rendering metrics |
+| `threads` | Query all threads from trace |
+| `long-tasks` | Query long tasks on a specific track |
+| `sql` | Execute raw SQL query |
+
+**Before using `sql`, please read the [sql-guide](./references/sql-guide.md) guide first.**
+
+######## Common Options
+
+All commands require the `-p, --path <path>` option to specify the trace file path (can be a URL or local file path).
+
+#### Usage Examples
+
+- **Show help:**
+
+  ```bash
+  $ node <path_to_the_skill>/scripts/trace_query.bundle.js --help
+  ```
+
+- **Query by slice ID:**
+
+  ```bash
+  $ node <path_to_the_skill>/scripts/trace_query.bundle.js id --id 381 --path "https://example.com/trace.pftrace"
+  ```
+
+- **Query by time window:**
+
+  ```bash
+  $ node <path_to_the_skill>/scripts/trace_query.bundle.js time-window --start 27110135.548086 --end 27110139 --path "https://example.com/trace.pftrace"
+  ```
+
+- **Query aggregate:**
+
+  ```bash
+  $ node <path_to_the_skill>/scripts/trace_query.bundle.js aggregate --start 27110135.548086 --end 27110139 --name "TemplateName" --path "https://example.com/trace.pftrace"
+  ```
+
+- **Query ancestors/descendants:**
+
+  ```bash
+  $ node <path_to_the_skill>/scripts/trace_query.bundle.js ancestors --id 4894 --path "https://example.com/trace.pftrace"
+  $ node <path_to_the_skill>/scripts/trace_query.bundle.js descendants --id 4894 --path "https://example.com/trace.pftrace"
+  ```
+
+- **Query flow events:**
+
+  ```bash
+  $ node <path_to_the_skill>/scripts/trace_query.bundle.js flow --id 6808 --path "https://example.com/trace.pftrace"
+  ```
+
+- **Query trace metadata:**
+
+  ```bash
+  $ node <path_to_the_skill>/scripts/trace_query.bundle.js metadata --path "https://example.com/trace.pftrace"
+  ```
+
+- **Query LynxView instances:**
+
+  ```bash
+  $ node <path_to_the_skill>/scripts/trace_query.bundle.js lynxview --path "https://example.com/trace.pftrace"
+  ```
+
+- **Query pipeline IDs:**
+
+  ```bash
+  $ node <path_to_the_skill>/scripts/trace_query.bundle.js pipeline --instance-id "instance_123" --path "https://example.com/trace.pftrace"
+  ```
+
+- **Query pipeline overview:**
+
+  ```bash
+  $ node <path_to_the_skill>/scripts/trace_query.bundle.js pipeline-overview --pipeline-id "pipeline_456" --path "https://example.com/trace.pftrace"
+  ```
+
+- **Query metrics:**
+
+  ```bash
+  $ node <path_to_the_skill>/scripts/trace_query.bundle.js metrics --path "https://example.com/trace.pftrace"
+  ```
+
+- **Query threads:**
+
+  ```bash
+  $ node <path_to_the_skill>/scripts/trace_query.bundle.js threads --path "https://example.com/trace.pftrace"
+  ```
+
+- **Query long tasks:**
+
+  ```bash
+  $ node <path_to_the_skill>/scripts/trace_query.bundle.js long-tasks --track 6 --duration 16 --path "https://example.com/trace.pftrace"
+  ```
+
+- **Execute raw SQL query:**
+
+  ```bash
+  $ node <path_to_the_skill>/scripts/trace_query.bundle.js sql --query "SELECT * FROM slice LIMIT 10" --path "https://example.com/trace.pftrace"
+  ```
+
+- **Using local file path:**
+
+  ```bash
+  $ node <path_to_the_skill>/scripts/trace_query.bundle.js metadata --path "/path/to/local/trace.pftrace"
+  ```
