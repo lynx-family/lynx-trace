@@ -1,0 +1,79 @@
+name: Publish Trace Analysis Packages
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_type:
+        description: 'Release type'
+        required: true
+        default: 'patch'
+        type: choice
+        options:
+          - patch
+          - alpha
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./trace_analysis
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.26.1
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Setup Git user
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Build packages
+        run: pnpm build
+
+      - name: Create changeset
+        run: |
+          echo '---
+          "@lynx-js/trace-analysis-agent": patch
+          "@lynx-js/trace-query": patch
+          ---
+          
+          Release packages' > .changeset/release-packages.md
+
+      - name: Version and publish patch version
+        if: ${{ github.event.inputs.release_type == 'patch' }}
+        run: |
+          pnpm changeset:version
+          git add -A
+          git commit -m "chore: release trace analysis packages"
+
+      - name: Push changes
+        if: ${{ github.event.inputs.release_type == 'patch' }}
+        uses: ad-m/github-push-action@v0
+        with:
+          branch: ${{ github.ref }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish to npm
+        run: |
+          echo "//registry.npmjs.org/:_authToken=${{ secrets.NPM_TOKEN }}" > .npmrc
+          if [ "${{ github.event.inputs.release_type }}" = "patch" ]; then
+            pnpm changeset:publish
+          else
+            pnpm changeset:alpha
+          fi
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
