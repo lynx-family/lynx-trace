@@ -242,10 +242,13 @@ config("default") {
     }
   } else if (!is_wasm) {  # !is_win
     cflags += [
-      "-g",
       "-fPIC",
       "-fstack-protector-strong",
     ]
+    # Only add debug info for debug builds
+    if (is_debug) {
+      cflags += [ "-g" ]
+    }
   }
 
   # Treat warnings as errors, but give up on fuzzer builds.
