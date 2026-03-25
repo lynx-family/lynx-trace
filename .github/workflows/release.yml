@@ -12,9 +12,14 @@ on:
           - patch
           - alpha
 
+permissions:
+  contents: write
+  id-token: write
+
 jobs:
   publish:
     runs-on: ubuntu-latest
+    environment: npm
     defaults:
       run:
         working-directory: ./trace_analysis
@@ -27,6 +32,9 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
+
+      - name: Upgrade npm CLI to latest
+        run: npm install -g npm@latest
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -69,11 +77,8 @@ jobs:
 
       - name: Publish to npm
         run: |
-          echo "//registry.npmjs.org/:_authToken=${{ secrets.NPM_TOKEN }}" > .npmrc
           if [ "${{ github.event.inputs.release_type }}" = "patch" ]; then
             pnpm changeset:publish
           else
             pnpm changeset:alpha
           fi
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
