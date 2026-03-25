@@ -1,0 +1,51 @@
+{
+  "name": "@lynx-js/trace-query",
+  "version": "0.0.1",
+  "description": "Lynx trace query library and CLI tool",
+  "keywords": [
+    "lynx",
+    "trace",
+    "performance",
+    "analysis",
+    "perfetto",
+    "cli"
+  ],
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lynx-family/lynx-trace.git",
+    "directory": "trace_analysis/packages/trace_query"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "trace-query": "./dist/cli/index.js"
+  },
+  "files": [
+    "dist/**/*",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "node ./scripts/compile_proto.mjs && tsc",
+    "clean": "rm -rf dist",
+    "prepublishOnly": "npm run build",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "commander": "^11.0.0",
+    "node-fetch": "^3.3.2",
+    "protobufjs": "^7.2.0",
+    "uuid": "^9.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "protobufjs-cli": "^1.1.2",
+    "typescript": "^5.0.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

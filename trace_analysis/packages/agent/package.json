@@ -1,0 +1,61 @@
+{
+  "name": "@lynx-js/trace-analysis-agent",
+  "version": "0.0.1",
+  "description": "Lynx trace analysis AI agent",
+  "keywords": [
+    "lynx",
+    "trace",
+    "performance",
+    "analysis",
+    "agent",
+    "ai"
+  ],
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lynx-family/lynx-trace.git",
+    "directory": "trace_analysis/packages/agent"
+  },
+  "bugs": {
+    "url": "https://github.com/lynx-family/lynx-trace/issues"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist/**/*",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "test:server": "node dist/test/server.js",
+    "prepublishOnly": "npm run build",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@lynx-js/trace-query": "workspace:*",
+    "@langchain/anthropic": "^1.3.15",
+    "@langchain/core": "^1.1.19",
+    "@langchain/google-genai": "^2.1.15",
+    "@langchain/langgraph": "^1.1.4",
+    "@langchain/openai": "^1.2.5",
+    "langchain": "^1.2.18",
+    "protobufjs": "^7.2.0",
+    "uuid": "^9.0.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^20.0.0",
+    "@types/uuid": "^9.0.0",
+    "express": "^5.2.1",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.2.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

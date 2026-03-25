@@ -1,0 +1,12 @@
+node_modules/
+dist/
+build/
+coverage/
+skills/
+*.log
+*.json
+*.md
+*.yml
+*.yaml
+*.bundle.js
+webpack.config.js

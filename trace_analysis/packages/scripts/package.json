@@ -1,0 +1,32 @@
+{
+  "name": "@lynx-js/trace-analysis-scripts",
+  "version": "0.0.2",
+  "private": true,
+  "license": "Apache-2.0",
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "generate-skills": "ts-node src/generate_skills.ts",
+    "generate-prompts": "ts-node src/generate_prompts.ts",
+    "bundle-trace-query": "ts-node src/bundle_trace_query.ts",
+    "test-query-results": "ts-node src/test/test_query_results.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@lynx-js/trace-query": "workspace:*",
+    "@types/node": "^20.0.0",
+    "gray-matter": "^4.0.3",
+    "ts-node": "^10.9.1",
+    "typescript": "^5.0.0"
+  },
+  "devDependencies": {
+    "webpack": "^5.0.0",
+    "webpack-cli": "^5.0.0",
+    "babel-loader": "^9.0.0",
+    "@babel/core": "^7.0.0",
+    "@babel/preset-env": "^7.0.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
