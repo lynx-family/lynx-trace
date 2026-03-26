@@ -2,14 +2,13 @@
 // Licensed under the Apache License Version 2.0 that can be found in the
 // LICENSE file in the root directory of this source tree.
 
-import * as crypto from 'crypto';
-import * as fs from 'fs';
-import * as os from 'os';
-import * as path from 'path';
-
+import TraceProcessor, { TraceProcessorConfig, TraceProcessorException } from '../trace_processor';
 import fetch from 'node-fetch';
 
-import TraceProcessor, { TraceProcessorConfig, TraceProcessorException } from '../trace_processor';
+import * as os from 'os';
+import * as path from 'path';
+import * as fs from 'fs';
+import * as crypto from 'crypto';
 
 interface BinaryConfig {
   url: string;
@@ -26,7 +25,7 @@ const binaryCache: Map<string, string> = new Map();
 
 export class TraceQuery {
   private traceProcessor: TraceProcessor | undefined;
-
+  
   private traceFileCache: Map<string, string> = new Map();
 
   /**
@@ -72,52 +71,88 @@ export class TraceQuery {
    * Get the appropriate binary path for the current system
    */
   private async getBinaryPath(): Promise<string> {
-    const cacheKey = `${os.platform()}-${os.arch()}`;
+    let config: BinaryConfig | undefined;
+
+    // Check if URL and SHA256 are provided via environment variables
+    const envUrl = process.env['TRACE_PROCESSOR_SHELL_URL'];
+    const envSha256 = process.env['TRACE_PROCESSOR_SHELL_SHA256'];
+
+    if (envUrl) {
+      // Check if envUrl is a local file path
+      try {
+        // Try to parse as URL - if it fails, it's a local path
+        new URL(envUrl);
+        // It's a URL
+        if (envSha256) {
+          config = {
+            url: envUrl,
+            sha256: envSha256,
+          };
+        } else {
+          throw new Error(`TRACE_PROCESSOR_SHELL_URL is set but TRACE_PROCESSOR_SHELL_SHA256 is missing. Both are required when using a custom URL.`);
+        }
+      } catch {
+        // It's a local file path
+        if (fs.existsSync(envUrl)) {
+          // Use the local file directly, no need to download
+          binaryCache.set(envUrl, envUrl);
+          return envUrl;
+        } else {
+          throw new Error(`Local file specified in TRACE_PROCESSOR_SHELL_URL does not exist: ${envUrl}`);
+        }
+      }
+    }
+
+    if (!config) {
+      const trace_processor_shell: TraceProcessorShellConfig = {
+        darwin: {
+          arm64: {
+            url: 'https://github.com/lynx-family/lynx-trace/releases/download/trace_processor_shell-21d0b01/trace_processor_shell_darwin_arm64',
+            sha256: 'c443069229f3e63e21dea29ec32151724aa88f7adfda5f8ce7887c59ffc7ce74',
+          },
+          x64: {
+            url: 'https://github.com/lynx-family/lynx-trace/releases/download/trace_processor_shell-21d0b01/trace_processor_shell_darwin_x64',
+            sha256: 'fb49570afc842c90f07d9d4f3104a2c7da8e00482849e360866b10c57cd5dd42',
+          },
+        },
+        linux: {
+          arm64: {
+            url: 'https://github.com/lynx-family/lynx-trace/releases/download/trace_processor_shell-21d0b01/trace_processor_shell_linux_arm64',
+            sha256: '4eb05a3472302c9256dc23df0e102ac78e1c3aedfbf45fa1f41b43c0a89c3d10',
+          },
+          x64: {
+            url: 'https://github.com/lynx-family/lynx-trace/releases/download/trace_processor_shell-21d0b01/trace_processor_shell_linux_x64',
+            sha256: 'b0851455a0aea40a524e42445c775281a3b07f4adaa664f33959fb4d1b03836f',
+          },
+        },
+        win32: {
+          x64: {
+            url: 'https://github.com/lynx-family/lynx-trace/releases/download/trace_processor_shell-21d0b01/trace_processor_shell_win32.exe',
+            sha256: '530bae7d289a4de67b558876ce8de16d8f72a9b1a891b363533f96002787651c',
+          },
+        },
+      };
+
+      const platform = os.platform();
+      const arch = os.arch();
+
+      if (trace_processor_shell[platform] && trace_processor_shell[platform][arch]) {
+        config = trace_processor_shell[platform][arch];
+      }
+
+      if (!config) {
+        throw new Error(`No prebuilt trace_processor_shell available for ${platform}-${arch}`);
+      }
+    }
+
+    // Determine cache key based on config
+    const cacheKey = envUrl && envSha256 
+      ? `${config.url}-${config.sha256}` 
+      : `${os.platform()}-${os.arch()}`;
 
     // Check if we already have a cached binary path
     if (binaryCache.has(cacheKey)) {
       return binaryCache.get(cacheKey)!;
-    }
-
-    const trace_processor_shell: TraceProcessorShellConfig = {
-      darwin: {
-        arm64: {
-          url: 'https://github.com/lynx-family/lynx-trace/releases/download/trace_processor_shell-b48d1ec/trace_processor_shell_darwin_arm64',
-          sha256: '9c2a443b372456fd99ead42cb2da3842d90652c97dde32adeb169333f4d90177',
-        },
-        x64: {
-          url: 'https://github.com/lynx-family/lynx-trace/releases/download/trace_processor_shell-b48d1ec/trace_processor_shell_darwin_x64',
-          sha256: 'c418a89103c6ea00a29ff34a5312a99a9f1071eef979dff34211f7ace1737ac3',
-        },
-      },
-      linux: {
-        arm64: {
-          url: 'https://github.com/lynx-family/lynx-trace/releases/download/trace_processor_shell-b48d1ec/trace_processor_shell_linux_arm64',
-          sha256: '7d2b8846f0d093c44ec8be9d644f09675b99f0c1b4f49dc6c9a23fc67645a8bc',
-        },
-        x64: {
-          url: 'https://github.com/lynx-family/lynx-trace/releases/download/trace_processor_shell-b48d1ec/trace_processor_shell_linux_x64',
-          sha256: '7a3c30f603c68b609da26ba4da6f85efeabb9bcaff732b8dc398211cda879120',
-        },
-      },
-      win32: {
-        x64: {
-          url: 'https://github.com/lynx-family/lynx-trace/releases/download/trace_processor_shell-b48d1ec/trace_processor_shell_win32.exe',
-          sha256: 'a4dfc5e73891524f29183592dbe3c773c3fd4a18282bce604d38c3303c1a47c4',
-        },
-      },
-    };
-
-    const platform = os.platform();
-    const arch = os.arch();
-    let config: BinaryConfig | undefined;
-
-    if (trace_processor_shell[platform]?.[arch]) {
-      config = trace_processor_shell[platform][arch];
-    }
-
-    if (!config) {
-      throw new Error(`No prebuilt trace_processor_shell available for ${platform}-${arch}`);
     }
 
     // Generate local file path in tmp directory
@@ -130,8 +165,8 @@ export class TraceQuery {
       return localPath;
     }
 
-    // Download file from remote URL
-    await this.downloadBinary(config.url, localPath, config.sha256);
+    // Download file from remote URL with 30-second timeout
+    await this.downloadBinary(config.url, localPath, config.sha256, 30000);
 
     // Cache the binary path
     binaryCache.set(cacheKey, localPath);
@@ -161,6 +196,19 @@ export class TraceQuery {
   }
 
   /**
+   * Safely delete a file, ignoring errors
+   */
+  private safeUnlink(filePath: string): void {
+    try {
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+      }
+    } catch {
+      // Ignore errors when deleting
+    }
+  }
+
+  /**
    * Download a file from a URL to a local path
    */
   private async downloadFile(url: string, filePath: string, timeout: number = 60000): Promise<void> {
@@ -170,7 +218,10 @@ export class TraceQuery {
       fs.mkdirSync(dir, { recursive: true });
     }
 
-    const file = fs.createWriteStream(filePath);
+    // Use temporary file to avoid file lock issues
+    const tempFilePath = `${filePath}.tmp.${Date.now()}.${Math.floor(Math.random() * 10000)}`;
+    const file = fs.createWriteStream(tempFilePath);
+    let timer: NodeJS.Timeout | null = null;
 
     try {
       const response = await fetch(url, { redirect: 'follow' });
@@ -187,33 +238,58 @@ export class TraceQuery {
       response.body.pipe(file);
 
       await new Promise<void>((resolve, reject) => {
+        timer = setTimeout(() => {
+          file.destroy();
+          this.safeUnlink(tempFilePath);
+          reject(new Error(`Download timeout after ${timeout}ms for ${url}. You can also set TRACE_PROCESSOR_SHELL_URL environment variable to specify a local path to avoid downloading.`));
+        }, timeout);
+
         file.on('finish', () => {
+          if (timer) {
+            clearTimeout(timer);
+          }
           file.close();
-          resolve();
+          // Rename temporary file to final file - use atomic rename
+          try {
+            // First try to rename directly, will overwrite on Unix-like systems
+            fs.renameSync(tempFilePath, filePath);
+            resolve();
+          } catch (renameErr: any) {
+            // On Windows, remove existing file first then rename
+            if (renameErr.code === 'EEXIST') {
+              try {
+                fs.unlinkSync(filePath);
+                fs.renameSync(tempFilePath, filePath);
+                resolve();
+              } catch (retryErr) {
+                this.safeUnlink(tempFilePath);
+                reject(new Error(`Failed to rename temporary file after retry: ${retryErr}`));
+              }
+            } else {
+              this.safeUnlink(tempFilePath);
+              reject(new Error(`Failed to rename temporary file: ${renameErr}`));
+            }
+          }
         });
 
         file.on('error', (err) => {
-          fs.unlink(filePath, () => {});
+          if (timer) {
+            clearTimeout(timer);
+          }
+          this.safeUnlink(tempFilePath);
           reject(err);
         });
 
-        // Timeout for file writing
-        const timer = setTimeout(() => {
-          file.destroy();
-          fs.unlink(filePath, () => {});
-          reject(new Error(`Download timeout after ${timeout}ms`));
-        }, timeout);
-
         file.on('close', () => {
-          clearTimeout(timer);
+          if (timer) {
+            clearTimeout(timer);
+          }
         });
       });
     } catch (error) {
       // Clean up on error
-      file.close();
-      if (fs.existsSync(filePath)) {
-        fs.unlink(filePath, () => {});
-      }
+      file.destroy();
+      this.safeUnlink(tempFilePath);
       throw error;
     }
   }
@@ -221,8 +297,8 @@ export class TraceQuery {
   /**
    * Download and verify a binary file
    */
-  private async downloadBinary(url: string, localPath: string, expectedSha256: string): Promise<void> {
-    await this.downloadFile(url, localPath);
+  private async downloadBinary(url: string, localPath: string, expectedSha256: string, timeout: number = 60000): Promise<void> {
+    await this.downloadFile(url, localPath, timeout);
 
     // Verify SHA256
     try {
@@ -232,14 +308,14 @@ export class TraceQuery {
       const actualSha256 = hash.digest('hex');
 
       if (actualSha256 !== expectedSha256) {
-        fs.unlinkSync(localPath); // Remove invalid file
+        this.safeUnlink(localPath); // Remove invalid file
         throw new Error(`SHA256 mismatch. Expected: ${expectedSha256}, Got: ${actualSha256}`);
       }
 
       // Make file executable
       fs.chmodSync(localPath, 0o755);
     } catch (error) {
-      fs.unlink(localPath, () => {}); // Clean up on error
+      this.safeUnlink(localPath); // Clean up on error
       throw new Error(`Error verifying downloaded file: ${error}`);
     }
   }
