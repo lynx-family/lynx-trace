@@ -122,7 +122,11 @@ function main() {
 
       const extraFields = generateToolsAndSubAgents(info);
 
-      const tsContent = `import { Prompt } from '../../types/prompt';
+      const tsContent = `// Copyright 2026 The Lynx Authors. All rights reserved.
+// Licensed under the Apache License Version 2.0 that can be found in the
+// LICENSE file in the root directory of this source tree.
+
+import { Prompt } from '../../types/prompt';
 
 export const prompt: Prompt = {
   name: ${stringifyWithSingleQuotes(info.name)},
@@ -157,7 +161,10 @@ export default prompt;
     ? stringifyWithBackticks(traceAnalysisInfo.description)
     : stringifyWithSingleQuotes(traceAnalysisInfo.description);
 
-  const traceAnalysisTsContent = `import { Prompt } from '../types/prompt';
+  const traceAnalysisTsContent = `// Copyright 2026 The Lynx Authors. All rights reserved.
+// Licensed under the Apache License Version 2.0 that can be found in the
+// LICENSE file in the root directory of this source tree.
+import { Prompt } from '../types/prompt';
 
 export const prompt: Prompt = {
   name: ${stringifyWithSingleQuotes(traceAnalysisInfo.name)},
@@ -183,7 +190,11 @@ export default prompt;
     })
     .join('\n');
 
-  const indexContent = `${imports}
+  const indexContent = `// Copyright 2026 The Lynx Authors. All rights reserved.
+// Licensed under the Apache License Version 2.0 that can be found in the
+// LICENSE file in the root directory of this source tree.
+
+${imports}
 
 export const skills = [
 ${analyzerPrompts}

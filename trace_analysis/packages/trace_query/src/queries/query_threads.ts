@@ -21,8 +21,8 @@ export async function queryThreads(traceQuery: TraceQuery, lynxThreadOnly: boole
   `;
 
   let result = await traceQuery.query(sql);
-  if (result.length === 0 || result[0] == undefined) {
-    return [];  
+  if (result.length === 0 || result[0] === undefined) {
+    return [];
   }
   const mainThread = result[0];
   if (lynxThreadOnly) {
@@ -34,5 +34,5 @@ export async function queryThreads(traceQuery: TraceQuery, lynxThreadOnly: boole
     tid: row.tid,
     name: row.name || `Thread ${row.tid}`,
     isMainThread: row.id === mainThread['id'],
-   }));
+  }));
 }
