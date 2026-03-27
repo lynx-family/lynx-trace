@@ -11,20 +11,20 @@ export const aggregateQueryTool = tool(
     try {
       const traceQuerys = config.configurable?.traceQuerys as TraceQuery[];
       if (!traceQuerys || traceQuerys.length === 0) {
-        throw new Error('TraceQuerys not found in config');
+        return JSON.stringify({ errorMessage: 'TraceQuerys not found in config' });
       }
       if (index < 0 || index >= traceQuerys.length) {
-        throw new Error('Invalid trace index');
+        return JSON.stringify({ errorMessage: 'Invalid trace index' });
       }
       const traceQuery = traceQuerys[index];
       if (!traceQuery) {
-        throw new Error('TraceQuery not found in config');
+        return JSON.stringify({ errorMessage: 'TraceQuery not found in config' });
       }
-      const result = await queryAggregate(traceQuery, start_ts_ms, end_ts_ms, names || [], track_id);
+      const result = await queryAggregate(traceQuery, start_ts_ms, end_ts_ms, names, track_id);
       result.sort((a, b) => b.total_duration_ms - a.total_duration_ms);
       return JSON.stringify(result.slice(0, 200));
     } catch (error) {
-      throw new Error((error as Error).message);
+      return JSON.stringify({ errorMessage: (error as Error).message });
     }
   },
   {
@@ -36,7 +36,6 @@ export const aggregateQueryTool = tool(
       end_ts_ms: z.number().describe('End timestamp in milliseconds.'),
       names: z
         .array(z.string())
-        .optional()
         .describe(
           'Event name patterns to match. Supports SQL LIKE wildcards: % matches any sequence of characters, _ matches any single character. Example: ["Timing::Mark%", "Lynx%"]',
         ),

@@ -15,18 +15,18 @@ export const queryDescendantsTool = tool(
     try {
       const traceQuerys = config.configurable?.traceQuerys as TraceQuery[];
       if (!traceQuerys || traceQuerys.length === 0) {
-        throw new Error('TraceQuerys not found in config');
+        return JSON.stringify({ errorMessage: 'TraceQuerys not found in config' });
       }
       if (index < 0 || index >= traceQuerys.length) {
-        throw new Error('Invalid trace index');
+        return JSON.stringify({ errorMessage: 'Invalid trace index' });
       }
       const traceQuery = traceQuerys[index];
       if (!traceQuery) {
-        throw new Error('TraceQuery not found in config');
+        return JSON.stringify({ errorMessage: 'TraceQuery not found in config' });
       }
       const event = await queryById(traceQuery, slice_id);
       if (!event || event.length === 0 || !event[0]) {
-        return JSON.stringify({ error: 'slice_id not found' });
+        return JSON.stringify({ errorMessage: 'slice_id not found' });
       }
       const start_ts = event[0].ts / NS_TO_MS;
       const end_ts = (event[0].ts + event[0].dur) / NS_TO_MS;
@@ -35,7 +35,7 @@ export const queryDescendantsTool = tool(
       const event_tree = getTreeStyleTraceEvents(simplifiedResult);
       return JSON.stringify(event_tree);
     } catch (error) {
-      throw new Error((error as Error).message);
+      return JSON.stringify({ errorMessage: (error as Error).message });
     }
   },
   {

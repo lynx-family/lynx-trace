@@ -13,21 +13,21 @@ export const queryByTimeWindowTool = tool(
     try {
       const traceQuerys = config.configurable?.traceQuerys as TraceQuery[];
       if (!traceQuerys || traceQuerys.length === 0) {
-        throw new Error('TraceQuerys not found in config');
+        return JSON.stringify({ errorMessage: 'TraceQuerys not found in config' });
       }
       if (index < 0 || index >= traceQuerys.length) {
-        throw new Error('Invalid trace index');
+        return JSON.stringify({ errorMessage: 'Invalid trace index' });
       }
       const traceQuery = traceQuerys[index];
       if (!traceQuery) {
-        throw new Error('TraceQuery not found in config');
+        return JSON.stringify({ errorMessage: 'TraceQuery not found in config' });
       }
       const result = await queryByTimeWindow(traceQuery, start_ts_ms, end_ts_ms, track_id);
       const simplifiedResult = await simplifyQueryResult(result, start_ts_ms, end_ts_ms);
       const event_tree = getTreeStyleTraceEvents(simplifiedResult);
       return JSON.stringify(event_tree);
     } catch (error) {
-      throw new Error((error as Error).message);
+      return JSON.stringify({ errorMessage: (error as Error).message });
     }
   },
   {
