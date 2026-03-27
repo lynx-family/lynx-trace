@@ -15,14 +15,14 @@ export const queryLongTasksTool = tool(
     try {
       const traceQuerys = config.configurable?.traceQuerys as TraceQuery[];
       if (!traceQuerys || traceQuerys.length === 0) {
-        throw new Error('TraceQuerys not found in config');
+        return JSON.stringify({ errorMessage: 'TraceQuerys not found in config' });
       }
       if (index < 0 || index >= traceQuerys.length) {
-        throw new Error('Invalid trace index');
+        return JSON.stringify({ errorMessage: 'Invalid trace index' });
       }
       const traceQuery = traceQuerys[index];
       if (!traceQuery) {
-        throw new Error('TraceQuery not found in config');
+        return JSON.stringify({ errorMessage: 'TraceQuery not found in config' });
       }
       const result = await queryLongTasks(traceQuery, track_id, min_duration_ms);
       if (result.length > 0) {
@@ -34,10 +34,10 @@ export const queryLongTasksTool = tool(
         const event_tree = getTreeStyleTraceEvents(simplifiedResult);
         return JSON.stringify(event_tree);
       } else {
-        return JSON.stringify({ error: 'No long tasks found' });
+        return JSON.stringify({ errorMessage: 'No long tasks found' });
       }
     } catch (error) {
-      throw new Error((error as Error).message);
+      return JSON.stringify({ errorMessage: (error as Error).message });
     }
   },
   {
