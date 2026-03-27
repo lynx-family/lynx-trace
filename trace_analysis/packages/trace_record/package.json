@@ -1,6 +1,7 @@
 {
-  "name": "@byted-lynx/trace-record",
+  "name": "@lynx-js/trace-record",
   "version": "0.0.1",
+  "private": true,
   "description": "Lynx trace record library and CLI tool",
   "keywords": [
     "lynx",
