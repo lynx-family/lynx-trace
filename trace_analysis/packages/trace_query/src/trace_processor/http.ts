@@ -6,6 +6,8 @@ import * as fs from 'fs';
 
 import fetch from 'node-fetch';
 
+// protos.js and protos.d.ts are auto-generated files by compile_proto.mjs during build
+// @ts-expect-error
 import protos from './protos.js';
 
 export interface TraceReference {
