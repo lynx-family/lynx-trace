@@ -10,11 +10,20 @@
     "reference.md",
     "examples.md"
   ],
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lynx-family/lynx-trace.git",
+    "directory": "trace_analysis/skills"
+  },
   "scripts": {
   },
   "devDependencies": {
   },
   "engines": {
     "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }
