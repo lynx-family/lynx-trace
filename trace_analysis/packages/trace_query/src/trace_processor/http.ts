@@ -34,7 +34,7 @@ export class TraceProcessorHttpClient {
         headers: {
           'Content-Type': 'application/x-protobuf',
         },
-        body: requestBuffer,
+        body: Buffer.from(requestBuffer),
       });
 
       if (!response.ok) {
@@ -73,7 +73,7 @@ export class TraceProcessorHttpClient {
       headers: {
         'Content-Type': 'application/x-protobuf',
       },
-      body: requestBuffer,
+      body: Buffer.from(requestBuffer),
     });
 
     if (!response.ok) {

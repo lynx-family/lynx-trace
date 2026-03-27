@@ -70,7 +70,8 @@ app.post('/trace_analysis', async (req, res) => {
     const { tracePath, modelConfig, language = 'Chinese', prompt = undefined } = req.body;
 
     if (!tracePath) {
-      return res.status(400).json({ error: 'tracePath is required' });
+      res.status(400).json({ error: 'tracePath is required' });
+      return;
     }
 
     const config = modelConfig;

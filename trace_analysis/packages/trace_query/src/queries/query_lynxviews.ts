@@ -38,10 +38,11 @@ async function getInstanceInfoMap(tp: TraceQuery): Promise<Record<string, string
   let instanceId = '';
 
   for (const instanceInfo of instanceInfoResult) {
-    if (instanceInfo.key === 'debug.url') {
-      url = instanceInfo.value as string;
-    } else if (instanceInfo.key === 'debug.instance_id') {
-      instanceId = instanceInfo.value as string;
+    const instanceInfoRecord = instanceInfo as Record<string, any>;
+    if (instanceInfoRecord['key'] === 'debug.url') {
+      url = instanceInfoRecord['value'] as string;
+    } else if (instanceInfoRecord['key'] === 'debug.instance_id') {
+      instanceId = instanceInfoRecord['value'] as string;
     }
 
     if (url && instanceId) {
@@ -58,12 +59,12 @@ function getBundleFromUrl(url: string): string {
   const pattern1 = /\/([^/]+\/[^/]+)\/template\.js/;
   const match1 = url.match(pattern1);
 
-  if (match1) {
+  if (match1 && match1[1]) {
     return match1[1];
   }
   const pattern2 = /bundle=([^&]+)/;
   const match2 = url.match(pattern2);
-  if (match2) {
+  if (match2 && match2[1]) {
     return match2[1];
   }
   return url;

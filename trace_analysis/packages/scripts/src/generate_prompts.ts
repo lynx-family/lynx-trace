@@ -27,12 +27,13 @@ function parseFrontMatter(content: string): {
   sub_agents?: string[];
 } {
   const result = matter(content);
+  const data: any = result.data;
   return {
-    name: result.data.name || '',
-    description: result.data.description || '',
+    name: data.name || '',
+    description: data.description || '',
     body: result.content.trim(),
-    tools: result.data.tools,
-    sub_agents: result.data.sub_agents,
+    tools: data.tools,
+    sub_agents: data.sub_agents,
   };
 }
 

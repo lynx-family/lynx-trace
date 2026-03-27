@@ -71,9 +71,9 @@ export const createLoggerMiddleware = (reporter?: ProgressReporter) => {
             result.update &&
             typeof result.update === 'object' &&
             'messages' in result.update &&
-            Array.isArray(result.update.messages)
+            Array.isArray((result.update as any).messages)
           ) {
-            toolMessages.push(...result.update.messages.filter((msg) => ToolMessage.isInstance(msg)));
+            toolMessages.push(...((result.update as any).messages.filter((msg: any) => ToolMessage.isInstance(msg))));
           }
           const resultContent = toolMessages.map((msg) => msg.content.toString()).join('\n');
           await reporter?.report({
@@ -137,18 +137,21 @@ export const createLoggerMiddleware = (reporter?: ProgressReporter) => {
     afterModel: async (state, config) => {
       const agentId = config.context.agentId;
       const messages = state.messages;
-      const summaryMessage = messages.filter((m) => m.additional_kwargs?.lc_source === 'summarization');
+      const summaryMessage = messages.filter((m) => (m.additional_kwargs as any)?.lc_source === 'summarization');
 
       try {
         if (summaryMessage.length > 0) {
-          await reporter?.report({
-            type: 'summary',
-            agentId,
-            agentName: config.context.agentName,
-            details: {
-              summaryMessage: summaryMessage[0].content.toString(),
-            },
-          });
+          const msg = summaryMessage[0];
+          if (msg) {
+            await reporter?.report({
+              type: 'summary',
+              agentId,
+              agentName: config.context.agentName,
+              details: {
+                summaryMessage: msg.content.toString(),
+              },
+            });
+          }
         }
       } catch (error) {
         console.error(`Error reporting model call event: ${error}`);
