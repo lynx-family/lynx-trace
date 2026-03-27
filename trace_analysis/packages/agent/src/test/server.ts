@@ -83,14 +83,14 @@ app.post('/trace_analysis', async (req, res) => {
     console.log(`Log file path: ${logPath}`);
     reporter.close();
 
-    res.json({
+    return res.json({
       success: result.success,
       data: result.success ? result.result : result.errorMessage,
       logFilePath: logPath,
     });
   } catch (error) {
     console.error('Error in trace_analysis:', error);
-    res
+    return res
       .status(500)
       .json({ error: 'Internal server error', details: error instanceof Error ? error.message : String(error) });
   }

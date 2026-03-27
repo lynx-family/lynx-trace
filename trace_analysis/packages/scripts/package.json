@@ -9,6 +9,7 @@
     "generate-skills": "ts-node src/generate_skills.ts",
     "generate-prompts": "ts-node src/generate_prompts.ts",
     "bundle-trace-query": "ts-node src/bundle_trace_query.ts",
+    "bundle-trace-record": "ts-node src/bundle_trace_record.ts",
     "test-query-results": "ts-node src/test/test_query_results.ts",
     "typecheck": "tsc --noEmit"
   },

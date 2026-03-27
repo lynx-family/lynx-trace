@@ -1,0 +1,11 @@
+node_modules/
+src/
+*.ts
+!dist/**/*.d.ts
+tsconfig.json
+.npmignore
+.gitignore
+.DS_Store
+*.log
+coverage/
+.nyc_output/
