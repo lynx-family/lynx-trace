@@ -7,11 +7,9 @@ import { Button } from 'antd';
 import { AnalysisProcess } from './ai_analysis/analysis_process';
 import { AnalysisReportComponent } from './ai_analysis/analysis_report';
 import { SettingsButton } from './ai_analysis/settings_button';
-import { AppImpl } from '../../../core/app_impl';
 import AIAnalysis from '../../../plugins/lynx.AIAnalysis';
 import { AnalysisReport, AnalysisStep, llmState, StepListener, EventData } from '../../../lynx_perf/llm_state';
 import { updateAnalysisSteps, convertEventDataArrayToAnalysisSteps } from '../../../lynx_perf/analysis_step_utils';
-import { STR } from '../../../trace_processor/query_result';
 import { eventLoggerState } from '../../../event_logger';
 
 
@@ -47,16 +45,6 @@ export class TraceAssistantPanel extends Component<{}, TraceAssistantPanelState>
   }
 
   performValidation = async () => {
-    const isLynxVersionValid = await this.validateLynxVersion();
-    if (!isLynxVersionValid) {
-      this.setState({
-        validationError: 'Use Lynx SDK version 3.4 or above to enable AI analysis.',
-        isValidationPassed: false
-      });
-      eventLoggerState.state.eventLogger.logEvent('ai_analysis_low_lynx_version', {});
-      return;
-    }
-
     const isLLMConfigValid = this.validateLLMConfig();
     if (!isLLMConfigValid) {
       this.setState({
@@ -191,16 +179,6 @@ export class TraceAssistantPanel extends Component<{}, TraceAssistantPanelState>
       });
     }
   }
-
-  validateLynxVersion = async (): Promise<boolean> => {
-    const engine = AppImpl.instance.trace?.engine;
-    if (!engine) {
-      return true;
-    }
-    const result = await engine.query(`select args.display_value from slice join args on args.arg_set_id=slice.arg_set_id where slice.name='LynxEngineVersion' and args.key='debug.version'`);
-    const version = result.numRows() > 0 ? result.firstRow({ display_value: STR }).display_value : '';
-    return !version || version >= '3.4';
-  };
 
   validateLLMConfig = (): boolean => {
     const config = this.getLLMConfig();
