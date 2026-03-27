@@ -1,0 +1,35 @@
+{
+  "name": "@byted-lynx/trace-record",
+  "version": "0.0.1",
+  "description": "Lynx trace record library and CLI tool",
+  "keywords": [
+    "lynx",
+    "trace",
+    "record",
+    "cli"
+  ],
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "trace-record": "./dist/cli/index.js"
+  },
+  "files": [
+    "dist/**/*",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@lynx-js/devtool-connector": "^0.1.0",
+    "commander": "^11.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  }
+}

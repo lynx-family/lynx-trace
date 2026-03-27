@@ -57,6 +57,7 @@ jobs:
           echo '---
           "@lynx-js/trace-analysis-agent": patch
           "@lynx-js/trace-query": patch
+          "@lynx-js/skill-lynx-trace-analysis": patch
           ---
           
           Release packages' > .changeset/release-packages.md

@@ -6,10 +6,13 @@ const path = require('path');
 
 module.exports = {
   mode: 'production',
-  entry: './packages/trace_query/dist/cli/index.js',
+  entry: {
+    trace_query: './packages/trace_query/dist/cli/index.js',
+    trace_record: './packages/trace_record/dist/cli/index.js',
+  },
   output: {
     path: path.resolve(__dirname, 'dist', 'bundles'),
-    filename: 'trace_query.bundle.js',
+    filename: '[name].bundle.cjs',
     libraryTarget: 'commonjs2',
     globalObject: 'this',
   },
@@ -18,4 +21,13 @@ module.exports = {
   resolve: {
     extensions: ['.js'],
   },
+  optimization: {
+    minimize: false,
+    concatenateModules: false,
+    splitChunks: {
+      chunks: 'all',
+      name: 'shared',
+    },
+  },
+  devtool: 'source-map',
 };

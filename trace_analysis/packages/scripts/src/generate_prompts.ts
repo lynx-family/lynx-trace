@@ -1,7 +1,3 @@
-// Copyright 2026 The Lynx Authors. All rights reserved.
-// Licensed under the Apache License Version 2.0 that can be found in the
-// LICENSE file in the root directory of this source tree.
-
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -16,7 +12,6 @@ interface AnalyzerInfo {
   description: string;
   prompt: string;
   tools?: string[];
-  sub_agents?: string[];
 }
 
 function parseFrontMatter(content: string): {
@@ -24,7 +19,6 @@ function parseFrontMatter(content: string): {
   description: string;
   body: string;
   tools?: string[];
-  sub_agents?: string[];
 } {
   const result = matter(content);
   const data: any = result.data;
@@ -33,7 +27,6 @@ function parseFrontMatter(content: string): {
     description: data.description || '',
     body: result.content.trim(),
     tools: data.tools,
-    sub_agents: data.sub_agents,
   };
 }
 
@@ -48,14 +41,13 @@ function stringifyWithBackticks(str: string): string {
 }
 
 function parseMarkdown(content: string, filename: string): AnalyzerInfo {
-  const { name, description, body, tools, sub_agents } = parseFrontMatter(content);
+  const { name, description, body, tools } = parseFrontMatter(content);
 
   return {
     name: name || filename.replace('.md', ''),
     description,
     prompt: body,
     tools,
-    sub_agents,
   };
 }
 
@@ -64,10 +56,6 @@ function generateToolsAndSubAgents(info: AnalyzerInfo): string {
   if (info.tools && info.tools.length > 0) {
     const toolsStr = info.tools.map((t) => stringifyWithSingleQuotes(t)).join(', ');
     result += `  tools: [${toolsStr}],\n`;
-  }
-  if (info.sub_agents && info.sub_agents.length > 0) {
-    const subAgentsStr = info.sub_agents.map((s) => stringifyWithSingleQuotes(s)).join(', ');
-    result += `  sub_agents: [${subAgentsStr}],\n`;
   }
   return result;
 }

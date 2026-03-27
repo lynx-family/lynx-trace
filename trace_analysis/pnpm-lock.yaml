@@ -162,6 +162,22 @@ importers:
         specifier: ^5.0.0
         version: 5.9.3
 
+  packages/trace_record:
+    dependencies:
+      '@lynx-js/devtool-connector':
+        specifier: ^0.1.0
+        version: 0.1.0
+      commander:
+        specifier: ^11.0.0
+        version: 11.1.0
+    devDependencies:
+      '@types/node':
+        specifier: ^20.0.0
+        version: 20.19.33
+      typescript:
+        specifier: ^5.0.0
+        version: 5.9.3
+
 packages:
 
   '@anthropic-ai/sdk@0.73.0':
@@ -856,6 +872,10 @@ packages:
     engines: {node: '>=20'}
     peerDependencies:
       '@langchain/core': ^1.0.0
+
+  '@lynx-js/devtool-connector@0.1.0':
+    resolution: {integrity: sha512-zYE7aUC510EGDGA/wsGdNn8tVRy5XDwS8OmpFTTKMmzw9ww1LI3xYWlop5MF1cockZR98QHEmtzgxpXYa0YN9g==}
+    engines: {node: '>=18.19'}
 
   '@manypkg/find-root@1.1.0':
     resolution: {integrity: sha512-mki5uBvhHzO8kYYix/WRy2WX8S3B5wdVSc9D6KcU5lQNglP2yt58/VfLuAK49glRXChosY8ap2oJ1qgma3GUVA==}
@@ -4247,6 +4267,8 @@ snapshots:
       zod: 4.3.6
     transitivePeerDependencies:
       - ws
+
+  '@lynx-js/devtool-connector@0.1.0': {}
 
   '@manypkg/find-root@1.1.0':
     dependencies:
