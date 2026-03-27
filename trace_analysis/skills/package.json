@@ -1,0 +1,20 @@
+{
+  "name": "@lynx-js/skill-lynx-trace-analysis",
+  "version": "0.0.1",
+  "type": "module",
+  "files": [
+    "SKILL.md",
+    "scripts",
+    "references",
+    "examples",
+    "reference.md",
+    "examples.md"
+  ],
+  "scripts": {
+  },
+  "devDependencies": {
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
