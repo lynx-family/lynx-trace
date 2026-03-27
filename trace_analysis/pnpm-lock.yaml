@@ -178,6 +178,8 @@ importers:
         specifier: ^5.0.0
         version: 5.9.3
 
+  skills: {}
+
 packages:
 
   '@anthropic-ai/sdk@0.73.0':

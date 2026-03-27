@@ -1,6 +1,6 @@
 {
   "name": "@lynx-js/skill-lynx-trace-analysis",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "type": "module",
   "files": [
     "SKILL.md",
@@ -16,10 +16,8 @@
     "url": "https://github.com/lynx-family/lynx-trace.git",
     "directory": "trace_analysis/skills"
   },
-  "scripts": {
-  },
-  "devDependencies": {
-  },
+  "scripts": {},
+  "devDependencies": {},
   "engines": {
     "node": ">=18"
   },
