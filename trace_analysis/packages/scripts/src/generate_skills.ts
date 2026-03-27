@@ -15,9 +15,10 @@ const REFERENCES_DIR = path.resolve(DOCS_DIR, 'references');
 
 function parseFrontMatter(content: string): { name: string; description: string; body: string } {
   const result = matter(content);
+  const data: any = result.data;
   return {
-    name: result.data.name || '',
-    description: result.data.description || '',
+    name: data.name || '',
+    description: data.description || '',
     body: result.content.trim(),
   };
 }
