@@ -150,7 +150,7 @@ export async function queryMetrics(traceQuery: TraceQuery): Promise<MetricsRespo
       pipelineMetrics.sort((a, b) => a.ts - b.ts);
       const paintEnd = pipelineMetrics.find((metric) => metric.metric_key === 'paintEnd');
       const timing_flags = pipelineFlagMap.get(pipelineId) || '';
-      if (pipelineMetrics.length <= 0 || pipelineMetrics[0] == undefined || !timing_flags) {
+      if (pipelineMetrics.length <= 0 || pipelineMetrics[0] === undefined || !timing_flags) {
         continue;
       }
       const pipelineOrigin = origins.get(pipelineId);
