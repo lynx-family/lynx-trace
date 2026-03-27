@@ -41,7 +41,9 @@ function main() {
   } else {
     const files = fs.readdirSync(OUTPUT_DIR);
     for (const file of files) {
-      fs.rmSync(path.join(OUTPUT_DIR, file), { recursive: true, force: true });
+      if (file !== 'package.json') {
+        fs.rmSync(path.join(OUTPUT_DIR, file), { recursive: true, force: true });
+      }
     }
   }
 
