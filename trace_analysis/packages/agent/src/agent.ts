@@ -59,7 +59,7 @@ export class Agent {
           summaryPrefix: 'Continue the analysis based on the existing progress. The analysis progress is:',
           summaryPrompt,
         }),
-        createLoggerMiddleware(config.configurable?.reporter),
+        createLoggerMiddleware((config.configurable as any)?.reporter),
       ],
       contextSchema: AGENT_CONTEXT_SCHEMA,
     });
@@ -80,7 +80,9 @@ export class Agent {
       let output = '';
       if (result.messages && result.messages.length > 0) {
         const lastMessage = result.messages[result.messages.length - 1];
-        output = typeof lastMessage.content === 'string' ? lastMessage.content : JSON.stringify(lastMessage.content);
+        if (lastMessage) {
+          output = typeof lastMessage.content === 'string' ? lastMessage.content : JSON.stringify(lastMessage.content);
+        }
       }
       return {
         success: true,
