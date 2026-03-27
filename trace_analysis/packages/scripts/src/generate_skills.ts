@@ -1,7 +1,3 @@
-// Copyright 2026 The Lynx Authors. All rights reserved.
-// Licensed under the Apache License Version 2.0 that can be found in the
-// LICENSE file in the root directory of this source tree.
-
 import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -91,34 +87,44 @@ function main() {
     console.log('References directory not found:', REFERENCES_DIR);
   }
 
-  console.log('\nExecuting bundle-trace-query...');
+  console.log('\nExecuting bundle...');
   try {
     execSync('pnpm run bundle-trace-query', {
       stdio: 'inherit',
       cwd: path.resolve(__dirname, '..'),
     });
     console.log('Bundle completed successfully!');
-  } catch (error) {
-    console.error('Error executing bundle-trace-query:', error);
+  } catch (error: any) {
+    console.error('Error executing bundle!');
+    if (error.stdout) {
+      console.error('stdout:', error.stdout.toString());
+    }
+    if (error.stderr) {
+      console.error('stderr:', error.stderr.toString());
+    }
+    console.error('Error:', error);
     process.exit(1);
   }
 
-  const bundleSourcePath = path.resolve(__dirname, '..', 'dist', 'bundles', 'trace_query.bundle.js');
   const scriptsDestDir = path.join(OUTPUT_DIR, 'scripts');
 
   if (!fs.existsSync(scriptsDestDir)) {
     fs.mkdirSync(scriptsDestDir, { recursive: true });
   }
 
-  const bundleDestPath = path.join(scriptsDestDir, 'trace_query.bundle.js');
+  const bundles = ['trace_query.bundle.cjs', 'trace_record.bundle.cjs', 'shared.bundle.cjs'];
 
-  if (fs.existsSync(bundleSourcePath)) {
-    fs.copyFileSync(bundleSourcePath, bundleDestPath);
-    console.log(`Copied bundle.js to: ${bundleDestPath}`);
-  } else {
-    console.error('Bundle file not found:', bundleSourcePath);
-    process.exit(1);
-  }
+  bundles.forEach((bundleFileName) => {
+    const bundleSourcePath = path.resolve(__dirname, '..', 'dist', 'bundles', bundleFileName);
+    const bundleDestPath = path.join(scriptsDestDir, bundleFileName);
+    if (fs.existsSync(bundleSourcePath)) {
+      fs.copyFileSync(bundleSourcePath, bundleDestPath);
+      console.log(`Copied ${bundleFileName} to: ${bundleDestPath}`);
+    } else {
+      console.error('Bundle file not found:', bundleSourcePath);
+      process.exit(1);
+    }
+  });
 }
 
 main();

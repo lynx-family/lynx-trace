@@ -1,25 +1,43 @@
-// Copyright 2026 The Lynx Authors. All rights reserved.
-// Licensed under the Apache License Version 2.0 that can be found in the
-// LICENSE file in the root directory of this source tree.
-
 import { execSync } from 'child_process';
 import { join } from 'path';
 
 const rootDir = join(__dirname, '../../..');
 
 function main() {
-  console.log('Starting to bundle trace_query...');
+  console.log('Starting to bundle...');
 
   try {
-    // Execute webpack command to bundle
+    // Build trace_query
+    console.log('Building trace_query...');
+    execSync('pnpm run build', {
+      stdio: 'inherit',
+      cwd: join(rootDir, 'packages/trace_query'),
+    });
+
+    // Build trace_record
+    console.log('Building trace_record...');
+    execSync('pnpm run build', {
+      stdio: 'inherit',
+      cwd: join(rootDir, 'packages/trace_record'),
+    });
+
+    // Execute webpack command to bundle both
+    console.log('Bundling...');
     execSync(`npx webpack --config ${join(__dirname, '../webpack.config.js')}`, {
       stdio: 'inherit',
       cwd: rootDir,
     });
 
     console.log('Bundle completed!');
-  } catch (error) {
-    console.error('Bundle failed:', error);
+  } catch (error: any) {
+    console.error('Bundle failed!');
+    if (error.stdout) {
+      console.error('stdout:', error.stdout.toString());
+    }
+    if (error.stderr) {
+      console.error('stderr:', error.stderr.toString());
+    }
+    console.error('Error:', error);
     process.exit(1);
   }
 }
