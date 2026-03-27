@@ -71,7 +71,7 @@ jobs:
 
       - name: Push changes
         if: ${{ github.event.inputs.release_type == 'patch' }}
-        uses: ad-m/github-push-action@v0
+        uses: ad-m/github-push-action@master
         with:
           branch: ${{ github.ref }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
