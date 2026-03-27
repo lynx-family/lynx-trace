@@ -73,7 +73,7 @@ export const createLoggerMiddleware = (reporter?: ProgressReporter) => {
             'messages' in result.update &&
             Array.isArray((result.update as any).messages)
           ) {
-            toolMessages.push(...((result.update as any).messages.filter((msg: any) => ToolMessage.isInstance(msg))));
+            toolMessages.push(...(result.update as any).messages.filter((msg: any) => ToolMessage.isInstance(msg)));
           }
           const resultContent = toolMessages.map((msg) => msg.content.toString()).join('\n');
           await reporter?.report({

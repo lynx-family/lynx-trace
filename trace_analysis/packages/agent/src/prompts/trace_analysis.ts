@@ -1,11 +1,10 @@
 // Copyright 2026 The Lynx Authors. All rights reserved.
 // Licensed under the Apache License Version 2.0 that can be found in the
 // LICENSE file in the root directory of this source tree.
-
 import { Prompt } from '../types/prompt';
 
 export const prompt: Prompt = {
-  name: 'trace-analysis',
+  name: 'lynx-trace-analysis',
   description: `Specializes in analyzing Lynx trace data to diagnose performance issues and provide actionable optimization strategies.
 Key Scenarios:
   - Loading Performance: Diagnosing slow startup metrics (FCP, FMP, TTI) and white screen issues.

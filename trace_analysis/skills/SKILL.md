@@ -1,5 +1,5 @@
 ---
-name: trace-analysis
+name: lynx-trace-analysis
 description: |
   Specializes in analyzing Lynx trace data to diagnose performance issues and provide actionable optimization strategies.
   Key Scenarios:

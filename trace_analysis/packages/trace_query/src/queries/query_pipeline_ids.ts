@@ -24,7 +24,10 @@ export async function queryPipelineIds(traceQuery: TraceQuery, instance_id: stri
   const uniquePipelineIdSet = new Set<string>();
   const uniqueTimingFlagsSet = new Set<string>();
   for (const paintEndWithPipelineId of paintEndWithPipelineIdResult) {
-    if (!paintEndWithPipelineId['pipeline_id'] || uniquePipelineIdSet.has(paintEndWithPipelineId['pipeline_id'] as string)) {
+    if (
+      !paintEndWithPipelineId['pipeline_id'] ||
+      uniquePipelineIdSet.has(paintEndWithPipelineId['pipeline_id'] as string)
+    ) {
       continue;
     }
     uniquePipelineIdSet.add(paintEndWithPipelineId['pipeline_id'] as string);

@@ -2,13 +2,14 @@
 // Licensed under the Apache License Version 2.0 that can be found in the
 // LICENSE file in the root directory of this source tree.
 
-import TraceProcessor, { TraceProcessorConfig, TraceProcessorException } from '../trace_processor';
-import fetch from 'node-fetch';
-
+import * as crypto from 'crypto';
+import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import * as fs from 'fs';
-import * as crypto from 'crypto';
+
+import fetch from 'node-fetch';
+
+import TraceProcessor, { TraceProcessorConfig, TraceProcessorException } from '../trace_processor';
 
 interface BinaryConfig {
   url: string;
@@ -25,7 +26,7 @@ const binaryCache: Map<string, string> = new Map();
 
 export class TraceQuery {
   private traceProcessor: TraceProcessor | undefined;
-  
+
   private traceFileCache: Map<string, string> = new Map();
 
   /**
@@ -89,7 +90,9 @@ export class TraceQuery {
             sha256: envSha256,
           };
         } else {
-          throw new Error(`TRACE_PROCESSOR_SHELL_URL is set but TRACE_PROCESSOR_SHELL_SHA256 is missing. Both are required when using a custom URL.`);
+          throw new Error(
+            `TRACE_PROCESSOR_SHELL_URL is set but TRACE_PROCESSOR_SHELL_SHA256 is missing. Both are required when using a custom URL.`,
+          );
         }
       } catch {
         // It's a local file path
@@ -146,9 +149,7 @@ export class TraceQuery {
     }
 
     // Determine cache key based on config
-    const cacheKey = envUrl && envSha256 
-      ? `${config.url}-${config.sha256}` 
-      : `${os.platform()}-${os.arch()}`;
+    const cacheKey = envUrl && envSha256 ? `${config.url}-${config.sha256}` : `${os.platform()}-${os.arch()}`;
 
     // Check if we already have a cached binary path
     if (binaryCache.has(cacheKey)) {
@@ -241,7 +242,11 @@ export class TraceQuery {
         timer = setTimeout(() => {
           file.destroy();
           this.safeUnlink(tempFilePath);
-          reject(new Error(`Download timeout after ${timeout}ms for ${url}. You can also set TRACE_PROCESSOR_SHELL_URL environment variable to specify a local path to avoid downloading.`));
+          reject(
+            new Error(
+              `Download timeout after ${timeout}ms for ${url}. You can also set TRACE_PROCESSOR_SHELL_URL environment variable to specify a local path to avoid downloading.`,
+            ),
+          );
         }, timeout);
 
         file.on('finish', () => {
@@ -297,7 +302,12 @@ export class TraceQuery {
   /**
    * Download and verify a binary file
    */
-  private async downloadBinary(url: string, localPath: string, expectedSha256: string, timeout: number = 60000): Promise<void> {
+  private async downloadBinary(
+    url: string,
+    localPath: string,
+    expectedSha256: string,
+    timeout: number = 60000,
+  ): Promise<void> {
     await this.downloadFile(url, localPath, timeout);
 
     // Verify SHA256

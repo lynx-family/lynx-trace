@@ -26,7 +26,7 @@ export async function queryPipelineOverviewEvents(
       GROUP BY s.id
   `;
   const paintEndWithPipelineIdResult = await traceQuery.query(paintEndWithPipelineIdSql);
-  if (paintEndWithPipelineIdResult.length === 0 || paintEndWithPipelineIdResult[0] == undefined) {
+  if (paintEndWithPipelineIdResult.length === 0 || paintEndWithPipelineIdResult[0] === undefined) {
     return {};
   }
   const paintEndId = paintEndWithPipelineIdResult[0]['id'] as number;
@@ -57,7 +57,9 @@ export async function queryPipelineOverviewEvents(
   }
 
   const track_id =
-    flowIdRelatedTraces.length > 0 && flowIdRelatedTraces[0] !== undefined ? flowIdRelatedTraces[0]['track_id'] : paintEndWithPipelineIdResult[0]['track_id'];
+    flowIdRelatedTraces.length > 0 && flowIdRelatedTraces[0] !== undefined
+      ? flowIdRelatedTraces[0]['track_id']
+      : paintEndWithPipelineIdResult[0]['track_id'];
   const loadJsAppEventId = await firstJsUpdatePipelineWithLoadJSAppEvent(
     traceQuery,
     instance_id,
@@ -98,7 +100,7 @@ async function firstJsUpdatePipelineWithLoadJSAppEvent(
   track_id: number,
 ) {
   const loadJSAppEvents = await queryEventByName(traceQuery, instance_id, 'LoadJSApp');
-  if (loadJSAppEvents.length === 0 || loadJSAppEvents[0] == undefined) {
+  if (loadJSAppEvents.length === 0 || loadJSAppEvents[0] === undefined) {
     return null;
   }
   const loadJSAppEvent = loadJSAppEvents[0];
@@ -120,7 +122,11 @@ async function firstJsUpdatePipelineWithLoadJSAppEvent(
   for (const row of paintEndWithPipelineIdResult) {
     let flowIdRelatedTraces = await queryFlowIdRelatedTrace(traceQuery, row['id']);
     flowIdRelatedTraces = await filterFlowIdRelatedTraces(flowIdRelatedTraces, row['pipeline_id'], traceQuery);
-    if (flowIdRelatedTraces.length > 0 && flowIdRelatedTraces[0] !== undefined && flowIdRelatedTraces[0]['track_id'] === loadJSAppEvent['track_id']) {
+    if (
+      flowIdRelatedTraces.length > 0 &&
+      flowIdRelatedTraces[0] !== undefined &&
+      flowIdRelatedTraces[0]['track_id'] === loadJSAppEvent['track_id']
+    ) {
       return null;
     }
   }
