@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.0.3
+
+### Patch Changes
+
+- Release packages
+- Updated dependencies
+  - @lynx-js/trace-query@0.0.3
+
 ## 0.0.2
 
 ### Patch Changes
