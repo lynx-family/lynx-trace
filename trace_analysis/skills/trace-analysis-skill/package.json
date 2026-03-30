@@ -1,6 +1,6 @@
 {
   "name": "@lynx-js/skill-lynx-trace-analysis",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "type": "module",
   "files": [
     "SKILL.md",
@@ -21,8 +21,7 @@
     "clean": "rm -rf references examples scripts reference.md SKILL.md",
     "prepublishOnly": "npm run build"
   },
-  "devDependencies": {
-  },
+  "devDependencies": {},
   "engines": {
     "node": ">=18"
   },
