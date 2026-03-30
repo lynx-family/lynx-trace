@@ -1,0 +1,32 @@
+{
+  "name": "@lynx-js/skill-lynx-trace-analysis",
+  "version": "0.0.2",
+  "type": "module",
+  "files": [
+    "SKILL.md",
+    "scripts",
+    "references",
+    "examples",
+    "reference.md",
+    "examples.md"
+  ],
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lynx-family/lynx-trace.git",
+    "directory": "trace_analysis/skills/trace-analysis-skill"
+  },
+  "scripts": {
+    "build": "cd ../../packages/scripts && npm run generate-skills",
+    "clean": "rm -rf references examples scripts reference.md SKILL.md",
+    "prepublishOnly": "npm run build"
+  },
+  "devDependencies": {
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

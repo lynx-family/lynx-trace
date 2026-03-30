@@ -1,5 +1,5 @@
 ---
-name: trace-recording
+name: lynx-trace-record
 description: This guide provides step-by-step instructions for recording Lynx performance traces. Use this guide when the user asks how to record a trace.
 ---
 

@@ -8,7 +8,6 @@ description: |
     - Regression Detection: Comparing traces to identify performance degradation or verify optimization gains between versions.
     - Pipeline Deep Dive: Pinpointing bottlenecks in specific rendering stages like Layout, Paint, JS execution, and background threads.
     - Native Module Analysis: Investigating performance issues related to native module calls.
-    - Trace Recording: Capturing Lynx performance traces using the trace_record CLI tool for analysis.
 
 ---
 
@@ -63,17 +62,10 @@ Provide 2-5 specific, actionable recommendations sorted by priority (High/Medium
 - [nativemodule-analysis](./references/nativemodule-analysis.md): Guide for: Bridge communication, Native method latency, Serialization costs. 
 - [render-pipeline](./references/render-pipeline.md): Guide for: Understanding Lynx rendering pipeline, identifying slow stages, and analyzing gaps between metrics.
 - [sql-guide](./references/sql-guide.md): Guide for writing raw SQL queries to query trace data.
-- [trace-recording](./references/trace-recording.md): Guide for recording Lynx traces using the trace_record CLI tool.
 
 ## INITIAL DECISION STRATEGIES
 
 Your **first** action MUST be one of the following, depending on the user's query:
-
-### Record Trace
-Example: User says "Analyze this trace" but doesn't provide a trace URL/path. You need to record a trace first before analyzing it.
-
-**Action:** Load the trace-recording guide:
-- [trace-recording](./references/trace-recording.md): Guide for recording Lynx traces using the trace_record CLI tool.
 
 ### Specific, Focused Queries
 
@@ -237,36 +229,4 @@ Trace recording commands support the following options:
 
   ```bash
   $ node <path_to_the_skill>/scripts/trace_query.bundle.cjs metadata --path "/path/to/local/trace.pftrace"
-  ```
-
-##### Trace Recording Examples
-
-- **Show help:**
-
-  ```bash
-  $ node <path_to_the_skill>/scripts/trace_record.bundle.cjs --help
-  ```
-
-- **List connected clients (apps):**
-
-  ```bash
-  $ node <path_to_the_skill>/scripts/trace_record.bundle.cjs list-clients
-  ```
-
-- **Start recording:**
-
-  ```bash
-  $ node <path_to_the_skill>/scripts/trace_record.bundle.cjs start --client <client-id>
-  ```
-
-- **Stop recording:**
-
-  ```bash
-  $ node <path_to_the_skill>/scripts/trace_record.bundle.cjs end --client <client-id>
-  ```
-
-- **Read and save trace data:**
-
-  ```bash
-  $ node <path_to_the_skill>/scripts/trace_record.bundle.cjs readData --client <client-id> --stream <stream-handle> --output ./trace.pftrace
   ```
