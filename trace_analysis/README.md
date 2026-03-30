@@ -12,7 +12,6 @@ trace_analysis/
 │   └── templates/        # Skill templates
 ├── packages/
 │   ├── agent/            # AI-powered trace analysis agent
-│   ├── mcp-server/       # MCP server implementation
 │   ├── scripts/          # Build and generation scripts
 │   └── trace_query/      # Trace query library and CLI
 └── skills/               # Auto-generated skill files

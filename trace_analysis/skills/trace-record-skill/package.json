@@ -1,5 +1,5 @@
 {
-  "name": "@lynx-js/skill-lynx-trace-analysis",
+  "name": "@lynx-js/skill-lynx-trace-record",
   "version": "0.0.2",
   "type": "module",
   "files": [
@@ -14,9 +14,13 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/lynx-family/lynx-trace.git",
-    "directory": "trace_analysis/skills"
+    "directory": "trace_analysis/skills/trace-record-skill"
   },
-  "scripts": {},
+  "scripts": {
+    "build": "cd ../../packages/scripts && npm run generate-skills",
+    "clean": "rm -rf references examples scripts reference.md SKILL.md",
+    "prepublishOnly": "npm run build"
+  },
   "devDependencies": {},
   "engines": {
     "node": ">=18"

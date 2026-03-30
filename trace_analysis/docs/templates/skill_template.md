@@ -145,35 +145,3 @@ Trace recording commands support the following options:
   ```bash
   $ node <path_to_the_skill>/scripts/trace_query.bundle.cjs metadata --path "/path/to/local/trace.pftrace"
   ```
-
-##### Trace Recording Examples
-
-- **Show help:**
-
-  ```bash
-  $ node <path_to_the_skill>/scripts/trace_record.bundle.cjs --help
-  ```
-
-- **List connected clients (apps):**
-
-  ```bash
-  $ node <path_to_the_skill>/scripts/trace_record.bundle.cjs list-clients
-  ```
-
-- **Start recording:**
-
-  ```bash
-  $ node <path_to_the_skill>/scripts/trace_record.bundle.cjs start --client <client-id>
-  ```
-
-- **Stop recording:**
-
-  ```bash
-  $ node <path_to_the_skill>/scripts/trace_record.bundle.cjs end --client <client-id>
-  ```
-
-- **Read and save trace data:**
-
-  ```bash
-  $ node <path_to_the_skill>/scripts/trace_record.bundle.cjs readData --client <client-id> --stream <stream-handle> --output ./trace.pftrace
-  ```

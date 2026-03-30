@@ -58,6 +58,7 @@ jobs:
           "@lynx-js/trace-analysis-agent": patch
           "@lynx-js/trace-query": patch
           "@lynx-js/skill-lynx-trace-analysis": patch
+          "@lynx-js/skill-lynx-trace-record": patch
           ---
           
           Release packages' > .changeset/release-packages.md
