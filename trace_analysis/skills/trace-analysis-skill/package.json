@@ -1,6 +1,6 @@
 {
   "name": "@lynx-js/skill-lynx-trace-analysis",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "type": "module",
   "files": [
     "SKILL.md",
