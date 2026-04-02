@@ -17,7 +17,14 @@ module.exports = {
     globalObject: 'this',
   },
   target: 'node',
-  externals: {},
+  externals: [
+    (context, request, callback) => {
+      if (request === './hook.cjs' || request === './hook') {
+        return callback(null, `commonjs ${request}`);
+      }
+      callback();
+    },
+  ],
   resolve: {
     extensions: ['.js'],
   },
