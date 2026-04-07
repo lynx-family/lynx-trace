@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+import {getUiMappingInfo} from '../../source_map/ui_mapping_state';
 import {Engine} from '../../trace_processor/engine';
 import {
   LONG_NULL,
@@ -69,15 +70,39 @@ export async function getArgs(
   });
 
   const result: Arg[] = [];
+  let nodeIndex: number | null = null;
+  let instanceId: string | null = null;
+
   for (; it.valid(); it.next()) {
     const value = parseValue(it.valueType as ArgValueType, it);
-    result.push({
+    const arg: Arg = {
       id: asArgId(it.id),
       flatKey: it.flatKey,
       key: it.key,
       value,
       displayValue: it.displayValue ?? 'NULL',
-    });
+    };
+    result.push(arg);
+
+    if (it.key === 'debug.nodeIndex' && it.intValue !== null) {
+      nodeIndex = Number(it.intValue);
+    } else if (it.key === 'debug.instance_id' && it.stringValue !== null) {
+      instanceId = it.stringValue;
+    }
+  }
+
+  if (instanceId && nodeIndex !== null) {
+    const uiMappingInfo = getUiMappingInfo(instanceId, nodeIndex);
+    if (uiMappingInfo) {
+      const sourceValue = `${uiMappingInfo.fileName}:${uiMappingInfo.line}:${uiMappingInfo.column}`;
+      result.push({
+        id: asArgId(0),
+        flatKey: 'debug.source',
+        key: 'debug.source',
+        value: sourceValue,
+        displayValue: sourceValue,
+      });
+    }
   }
 
   return result;
