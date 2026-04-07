@@ -13,6 +13,7 @@
 // limitations under the License.
 
 import {parseJsonWithBigints} from '../../base/json_utils';
+import {getUiMappingInfo} from '../../base/ui_source_mapping';
 import {Engine} from '../../trace_processor/engine';
 import {STR_NULL} from '../../trace_processor/query_result';
 import {ArgSetId} from './core_types';
@@ -23,6 +24,57 @@ export type ArgsDict = {[key: string]: Args};
 
 export function parseArgs(args: string): ArgsDict {
   return parseJsonWithBigints(args) as ArgsDict;
+}
+
+function getArgValue(args: ArgsDict, path: string): Args | undefined {
+  let value: Args | undefined = args;
+  for (const key of path.split('.')) {
+    if (value === null || typeof value !== 'object' || value instanceof Array) {
+      return undefined;
+    }
+    value = value[key];
+  }
+  return value;
+}
+
+function getStringArg(args: ArgsDict, path: string): string | undefined {
+  const value = getArgValue(args, path);
+  return typeof value === 'string' ? value : undefined;
+}
+
+function getNumberArg(args: ArgsDict, path: string): number | undefined {
+  const value = getArgValue(args, path);
+  if (typeof value === 'number') {
+    return value;
+  }
+  if (typeof value === 'string') {
+    return Number(value);
+  }
+  return undefined;
+}
+
+function addUiSourceMapping(args: ArgsDict): void {
+  const instanceId = getStringArg(args, 'debug.instance_id');
+  const nodeIndex = getNumberArg(args, 'debug.nodeIndex');
+  if (instanceId === undefined || nodeIndex === undefined) {
+    return;
+  }
+
+  const uiMappingInfo = getUiMappingInfo(instanceId, nodeIndex);
+  if (uiMappingInfo === null) {
+    return;
+  }
+
+  const debugArgs = args.debug;
+  if (
+    debugArgs === null ||
+    typeof debugArgs !== 'object' ||
+    debugArgs instanceof Array
+  ) {
+    return;
+  }
+
+  debugArgs.source = `${uiMappingInfo.fileName}:${uiMappingInfo.line}:${uiMappingInfo.column}`;
 }
 
 export async function getArgs(
@@ -41,5 +93,6 @@ export async function getArgs(
   }
 
   const argsDict = parseJsonWithBigints(it.args_json);
+  addUiSourceMapping(argsDict);
   return argsDict;
 }
