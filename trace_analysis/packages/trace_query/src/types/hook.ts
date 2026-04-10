@@ -4,5 +4,11 @@
 
 export interface CommandHooks {
   beforeCommand?: (commandName: string, tracePath: string) => Promise<void> | void;
-  afterCommand?: (commandName: string, tracePath: string, success: boolean, error?: string) => Promise<void> | void;
+  afterCommand?: (
+    commandName: string,
+    tracePath: string,
+    success: boolean,
+    error?: string,
+    traceUUID?: string,
+  ) => Promise<void> | void;
 }
