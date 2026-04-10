@@ -66,16 +66,32 @@ function parseInteger(value, defaultValue) {
         return defaultValue;
     return parseInt(value, 10);
 }
+async function getTraceUUID(traceQuery) {
+    try {
+        const uuidResult = await traceQuery.query("select str_value from metadata where name = 'trace_uuid'");
+        if (!uuidResult || uuidResult.length === 0 || !uuidResult[0]) {
+            return '';
+        }
+        return uuidResult[0]['str_value'] || '';
+    }
+    catch {
+        return '';
+    }
+}
 function wrapCommandAction(commandName, action) {
     return async (options) => {
         let success = false;
         let error;
+        let traceUUID = '';
         const tracePath = options.path || '';
         try {
             if (hooks.beforeCommand) {
                 await Promise.resolve(hooks.beforeCommand(commandName, tracePath));
             }
-            await action(options);
+            await withTraceQuery(tracePath, async (tq) => {
+                await action(options, tq);
+                traceUUID = await getTraceUUID(tq);
+            });
             success = true;
         }
         catch (e) {
@@ -84,7 +100,7 @@ function wrapCommandAction(commandName, action) {
         }
         finally {
             if (hooks.afterCommand) {
-                await Promise.resolve(hooks.afterCommand(commandName, tracePath, success, error?.message || undefined));
+                await Promise.resolve(hooks.afterCommand(commandName, tracePath, success, error?.message || undefined, traceUUID));
             }
         }
     };
@@ -97,13 +113,11 @@ async function main() {
         .description('Execute trace query by slice ID')
         .option('-i, --id <id>', 'Slice ID')
         .option('-p, --path <path>', 'Trace file path (can be URL or local file)')
-        .action(wrapCommandAction('id', async (options) => {
-        const path = requireOption(options.path, 'path');
+        .action(wrapCommandAction('id', async (options, tq) => {
+        requireOption(options.path, 'path');
         const id = parseInteger(requireOption(options.id, 'id'));
-        const result = await withTraceQuery(path, async (tq) => {
-            const events = await (0, query_by_id_1.queryById)(tq, id);
-            return (0, convert_trace_event_style_1.getTreeStyleTraceEvents)(events);
-        });
+        const events = await (0, query_by_id_1.queryById)(tq, id);
+        const result = (0, convert_trace_event_style_1.getTreeStyleTraceEvents)(events);
         console.log('Query result:', JSON.stringify(result, null, 2));
     }));
     program
@@ -113,15 +127,13 @@ async function main() {
         .option('-e, --end <end>', 'End timestamp in ms')
         .option('-t, --track <track>', 'Thread Track ID')
         .option('-p, --path <path>', 'Trace file path (can be URL or local file)')
-        .action(wrapCommandAction('time-window', async (options) => {
-        const path = requireOption(options.path, 'path');
+        .action(wrapCommandAction('time-window', async (options, tq) => {
+        requireOption(options.path, 'path');
         const start = parseNumber(requireOption(options.start, 'start'));
         const end = parseNumber(requireOption(options.end, 'end'));
         const track = parseInteger(options.track);
-        const result = await withTraceQuery(path, async (tq) => {
-            const events = await (0, query_by_time_window_1.queryByTimeWindow)(tq, start, end, track);
-            return (0, convert_trace_event_style_1.getTreeStyleTraceEvents)(events);
-        });
+        const events = await (0, query_by_time_window_1.queryByTimeWindow)(tq, start, end, track);
+        const result = (0, convert_trace_event_style_1.getTreeStyleTraceEvents)(events);
         console.log('Query result:', JSON.stringify(result, null, 2));
     }));
     program
@@ -132,15 +144,13 @@ async function main() {
         .option('-t, --track <track>', 'Thread Track ID')
         .option('-n, --names <names...>', 'Event name patterns (supports SQL LIKE wildcards: % and _)')
         .option('-p, --path <path>', 'Trace file path (can be URL or local file)')
-        .action(wrapCommandAction('aggregate', async (options) => {
-        const path = requireOption(options.path, 'path');
+        .action(wrapCommandAction('aggregate', async (options, tq) => {
+        requireOption(options.path, 'path');
         const start = parseNumber(requireOption(options.start, 'start'));
         const end = parseNumber(requireOption(options.end, 'end'));
         const track = parseInteger(options.track);
         const names = options.names || [];
-        const result = await withTraceQuery(path, async (tq) => {
-            return (0, query_aggregate_1.queryAggregate)(tq, start, end, names, track);
-        });
+        const result = await (0, query_aggregate_1.queryAggregate)(tq, start, end, names, track);
         console.log('Aggregate:', JSON.stringify(result, null, 2));
     }));
     program
@@ -148,13 +158,11 @@ async function main() {
         .description('Query ancestors of a slice')
         .option('-i, --id <id>', 'Slice ID')
         .option('-p, --path <path>', 'Trace file path (can be URL or local file)')
-        .action(wrapCommandAction('ancestors', async (options) => {
-        const path = requireOption(options.path, 'path');
+        .action(wrapCommandAction('ancestors', async (options, tq) => {
+        requireOption(options.path, 'path');
         const id = parseInteger(requireOption(options.id, 'id'));
-        const result = await withTraceQuery(path, async (tq) => {
-            const events = await (0, query_ancestors_1.queryAncestors)(tq, id);
-            return (0, convert_trace_event_style_1.getTreeStyleTraceEvents)(events);
-        });
+        const events = await (0, query_ancestors_1.queryAncestors)(tq, id);
+        const result = (0, convert_trace_event_style_1.getTreeStyleTraceEvents)(events);
         console.log('Ancestors:', JSON.stringify(result, null, 2));
     }));
     program
@@ -162,13 +170,11 @@ async function main() {
         .description('Query descendants of a slice')
         .option('-i, --id <id>', 'Slice ID')
         .option('-p, --path <path>', 'Trace file path (can be URL or local file)')
-        .action(wrapCommandAction('descendants', async (options) => {
-        const path = requireOption(options.path, 'path');
+        .action(wrapCommandAction('descendants', async (options, tq) => {
+        requireOption(options.path, 'path');
         const id = parseInteger(requireOption(options.id, 'id'));
-        const result = await withTraceQuery(path, async (tq) => {
-            const events = await (0, query_descendants_1.queryDescendants)(tq, id);
-            return (0, convert_trace_event_style_1.getTreeStyleTraceEvents)(events);
-        });
+        const events = await (0, query_descendants_1.queryDescendants)(tq, id);
+        const result = (0, convert_trace_event_style_1.getTreeStyleTraceEvents)(events);
         console.log('Descendants:', JSON.stringify(result, null, 2));
     }));
     program
@@ -176,24 +182,20 @@ async function main() {
         .description('Query flow events of a slice')
         .option('-i, --id <id>', 'Slice ID')
         .option('-p, --path <path>', 'Trace file path (can be URL or local file)')
-        .action(wrapCommandAction('flow', async (options) => {
-        const path = requireOption(options.path, 'path');
+        .action(wrapCommandAction('flow', async (options, tq) => {
+        requireOption(options.path, 'path');
         const id = parseInteger(requireOption(options.id, 'id'));
-        const result = await withTraceQuery(path, async (tq) => {
-            const events = await (0, query_flow_events_1.queryFlowEvents)(tq, id);
-            return (0, convert_trace_event_style_1.getTreeStyleTraceEvents)(events);
-        });
+        const events = await (0, query_flow_events_1.queryFlowEvents)(tq, id);
+        const result = (0, convert_trace_event_style_1.getTreeStyleTraceEvents)(events);
         console.log('Flow events:', JSON.stringify(result, null, 2));
     }));
     program
         .command('metadata')
         .description('Query trace metadata like system info, trace start time, end time, Lynx SDK version etc.')
         .option('-p, --path <path>', 'Trace file path (can be URL or local file)')
-        .action(wrapCommandAction('metadata', async (options) => {
-        const path = requireOption(options.path, 'path');
-        const result = await withTraceQuery(path, async (tq) => {
-            return (0, query_trace_metadata_1.queryTraceMetadata)(tq);
-        });
+        .action(wrapCommandAction('metadata', async (options, tq) => {
+        requireOption(options.path, 'path');
+        const result = await (0, query_trace_metadata_1.queryTraceMetadata)(tq);
         console.log('Metadata result:', JSON.stringify(result, null, 2));
     }));
     program
@@ -201,34 +203,28 @@ async function main() {
         .description('Execute raw SQL query')
         .option('-q, --query <sql>', 'SQL query')
         .option('-p, --path <path>', 'Trace file path (can be URL or local file)')
-        .action(wrapCommandAction('sql', async (options) => {
-        const path = requireOption(options.path, 'path');
+        .action(wrapCommandAction('sql', async (options, tq) => {
+        requireOption(options.path, 'path');
         const sqlQuery = requireOption(options.query, 'query');
-        const result = await withTraceQuery(path, async (tq) => {
-            return (0, query_by_raw_sql_1.queryByRawSql)(tq, sqlQuery);
-        });
+        const result = await (0, query_by_raw_sql_1.queryByRawSql)(tq, sqlQuery);
         console.log('SQL result:', JSON.stringify(result, null, 2));
     }));
     program
         .command('metrics')
         .description('Query metrics information from trace')
         .option('-p, --path <path>', 'Trace file path (can be URL or local file)')
-        .action(wrapCommandAction('metrics', async (options) => {
-        const path = requireOption(options.path, 'path');
-        const result = await withTraceQuery(path, async (tq) => {
-            return (0, query_metrics_1.queryMetrics)(tq);
-        });
+        .action(wrapCommandAction('metrics', async (options, tq) => {
+        requireOption(options.path, 'path');
+        const result = await (0, query_metrics_1.queryMetrics)(tq);
         console.log('Metrics result:', JSON.stringify(result, null, 2));
     }));
     program
         .command('threads')
         .description('Query all threads from trace')
         .option('-p, --path <path>', 'Trace file path (can be URL or local file)')
-        .action(wrapCommandAction('threads', async (options) => {
-        const path = requireOption(options.path, 'path');
-        const result = await withTraceQuery(path, async (tq) => {
-            return (0, query_threads_1.queryThreads)(tq);
-        });
+        .action(wrapCommandAction('threads', async (options, tq) => {
+        requireOption(options.path, 'path');
+        const result = await (0, query_threads_1.queryThreads)(tq);
         console.log('Threads result:', JSON.stringify(result, null, 2));
     }));
     program
@@ -237,25 +233,21 @@ async function main() {
         .option('-t, --track <track>', 'Thread Track ID')
         .option('-d, --duration <ms>', 'Minimum duration in milliseconds', '16')
         .option('-p, --path <path>', 'Trace file path (can be URL or local file)')
-        .action(wrapCommandAction('long-tasks', async (options) => {
-        const path = requireOption(options.path, 'path');
+        .action(wrapCommandAction('long-tasks', async (options, tq) => {
+        requireOption(options.path, 'path');
         const track = parseInteger(requireOption(options.track, 'track'));
         const duration = parseNumber(options.duration, 16);
-        const result = await withTraceQuery(path, async (tq) => {
-            const events = await (0, query_long_tasks_1.queryLongTasks)(tq, track, duration);
-            return (0, convert_trace_event_style_1.getTreeStyleTraceEvents)(events);
-        });
+        const events = await (0, query_long_tasks_1.queryLongTasks)(tq, track, duration);
+        const result = (0, convert_trace_event_style_1.getTreeStyleTraceEvents)(events);
         console.log('Long tasks:', JSON.stringify(result, null, 2));
     }));
     program
         .command('lynxview')
         .description('Query LynxView instances')
         .option('-p, --path <path>', 'Trace file path (can be URL or local file)')
-        .action(wrapCommandAction('lynxview', async (options) => {
-        const path = requireOption(options.path, 'path');
-        const result = await withTraceQuery(path, async (tq) => {
-            return (0, query_lynxviews_1.queryLynxView)(tq);
-        });
+        .action(wrapCommandAction('lynxview', async (options, tq) => {
+        requireOption(options.path, 'path');
+        const result = await (0, query_lynxviews_1.queryLynxView)(tq);
         console.log('LynxView instances:', JSON.stringify(result, null, 2));
     }));
     program
@@ -263,12 +255,10 @@ async function main() {
         .description('Query pipeline IDs for an instance')
         .option('--instance-id <id>', 'LynxView instance ID')
         .option('-p, --path <path>', 'Trace file path (can be URL or local file)')
-        .action(wrapCommandAction('pipeline', async (options) => {
-        const path = requireOption(options.path, 'path');
+        .action(wrapCommandAction('pipeline', async (options, tq) => {
+        requireOption(options.path, 'path');
         const instanceId = requireOption(options.instanceId, 'instance-id');
-        const result = await withTraceQuery(path, async (tq) => {
-            return (0, query_pipeline_ids_1.queryPipelineIds)(tq, instanceId);
-        });
+        const result = await (0, query_pipeline_ids_1.queryPipelineIds)(tq, instanceId);
         console.log('Pipeline IDs:', JSON.stringify(result, null, 2));
     }));
     program
@@ -276,12 +266,10 @@ async function main() {
         .description('Query pipeline overview events')
         .option('--pipeline-id <id>', 'Pipeline ID')
         .option('-p, --path <path>', 'Trace file path (can be URL or local file)')
-        .action(wrapCommandAction('pipeline-overview', async (options) => {
-        const path = requireOption(options.path, 'path');
+        .action(wrapCommandAction('pipeline-overview', async (options, tq) => {
+        requireOption(options.path, 'path');
         const pipelineId = requireOption(options.pipelineId, 'pipeline-id');
-        const result = await withTraceQuery(path, async (tq) => {
-            return (0, query_pipeline_overview_events_1.queryPipelineOverviewEvents)(tq, pipelineId);
-        });
+        const result = await (0, query_pipeline_overview_events_1.queryPipelineOverviewEvents)(tq, pipelineId);
         console.log('Pipeline overview:', JSON.stringify(result, null, 2));
     }));
     program.parse(process.argv);
