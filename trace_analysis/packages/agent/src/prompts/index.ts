@@ -9,7 +9,6 @@ import { prompt as nativemodule_analysis } from './references/nativemodule_analy
 import { prompt as render_pipeline } from './references/render_pipeline';
 import { prompt as sql_guide } from './references/sql_guide';
 import { prompt as timing_flag } from './references/timing_flag';
-import { prompt as trace_recording } from './references/trace_recording';
 
 export const skills = [
   diff_analysis,
@@ -19,5 +18,4 @@ export const skills = [
   render_pipeline,
   sql_guide,
   timing_flag,
-  trace_recording,
 ];

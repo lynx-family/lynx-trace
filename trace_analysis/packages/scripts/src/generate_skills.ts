@@ -31,7 +31,13 @@ function formatDescription(description: string): string {
   return '  ' + description;
 }
 
-function generateSkill(sourceFile: string, outputDir: string, bundles: string[], copyReferences: boolean = false, useTemplate: boolean = true) {
+function generateSkill(
+  sourceFile: string,
+  outputDir: string,
+  bundles: string[],
+  copyReferences: boolean = false,
+  useTemplate: boolean = true,
+) {
   console.log(`\nGenerating skill from ${sourceFile} to ${outputDir}`);
 
   if (!fs.existsSync(outputDir)) {
@@ -131,7 +137,7 @@ function main() {
     path.join(SKILLS_ROOT_DIR, 'trace-analysis-skill'),
     ['trace_query.bundle.cjs', 'shared.bundle.cjs'],
     true,
-    true
+    true,
   );
 
   generateSkill(
@@ -139,7 +145,7 @@ function main() {
     path.join(SKILLS_ROOT_DIR, 'trace-record-skill'),
     ['trace_record.bundle.cjs', 'shared.bundle.cjs'],
     false,
-    false
+    false,
   );
 
   console.log('\nAll skills generated successfully!');

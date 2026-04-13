@@ -343,7 +343,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.queryAncestors = queryAncestors;
 const parse_trace_event_1 = __webpack_require__(6331);
 async function queryAncestors(traceQuery, sliceId) {
-    const sql = "SELECT d_s.id, d_s.ts, d_s.dur, d_s.track_id, d_s.name, d_s.depth, t.name as thread_name, '{' || GROUP_CONCAT( printf('\"%s\": \"%s\"', a.key, a.display_value), ', ') || '}' AS args " +
+    const sql = 'SELECT d_s.id, d_s.ts, d_s.dur, d_s.track_id, d_s.name, d_s.depth, t.name as thread_name, json_group_object(a.key, a.display_value) AS args ' +
         `FROM ancestor_slice(${sliceId}) d_s LEFT JOIN args a ON d_s.arg_set_id = a.arg_set_id ` +
         'JOIN thread_track tt ON d_s.track_id = tt.id JOIN thread t ON tt.utid = t.utid ' +
         'GROUP BY d_s.id ORDER BY d_s.depth, d_s.ts';
@@ -365,8 +365,9 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.queryById = queryById;
 const parse_trace_event_1 = __webpack_require__(6331);
 async function queryById(traceQuery, slice_id) {
-    const sql = "SELECT s.id, s.ts, s.dur, s.track_id, s.name, t.name as thread_name, '{' || GROUP_CONCAT( printf('\"%s\": \"%s\"', a.key, a.display_value), ', ') || '}' AS args " +
-        `FROM slice s LEFT JOIN args a ON s.arg_set_id = a.arg_set_id JOIN thread_track tt ON s.track_id = tt.id JOIN thread t ON tt.utid = t.utid WHERE s.id = ${slice_id}`;
+    const sql = 'SELECT s.id, s.ts, s.dur, s.track_id, s.name, t.name as thread_name, json_group_object(a.key, a.display_value) AS args ' +
+        `FROM slice s LEFT JOIN args a ON s.arg_set_id = a.arg_set_id JOIN thread_track tt ON s.track_id = tt.id JOIN thread t ON tt.utid = t.utid WHERE s.id = ${slice_id} ` +
+        'GROUP BY s.id';
     const queryResult = await traceQuery.query(sql);
     const traceEvents = (0, parse_trace_event_1.parseTraceEvent)(queryResult);
     return traceEvents;
@@ -410,7 +411,7 @@ async function queryByTimeWindow(traceQuery, start_ts_ms, end_ts_ms, track_id) {
         ...(track_id ? [`s.track_id = ${track_id}`] : []),
     ];
     const constraints = `WHERE ${filters.join(' and ')}`;
-    const sql = "SELECT s.id, s.track_id, s.ts, s.dur, s.name, s.depth, t.name as thread_name, '{' || GROUP_CONCAT( printf('\"%s\": \"%s\"', a.key, a.display_value), ', ') || '}' AS args " +
+    const sql = 'SELECT s.id, s.track_id, s.ts, s.dur, s.name, s.depth, t.name as thread_name, json_group_object(a.key, a.display_value) AS args ' +
         'FROM slice s ' +
         'LEFT JOIN args a ON s.arg_set_id = a.arg_set_id ' +
         'JOIN thread_track tt ON s.track_id = tt.id JOIN thread t ON tt.utid = t.utid ' +
@@ -435,7 +436,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.queryDescendants = queryDescendants;
 const parse_trace_event_1 = __webpack_require__(6331);
 async function queryDescendants(traceQuery, sliceId) {
-    const sql = "SELECT d_s.id, d_s.ts, d_s.dur, d_s.track_id, d_s.name, d_s.depth, t.name as thread_name, '{' || GROUP_CONCAT( printf('\"%s\": \"%s\"', a.key, a.display_value), ', ') || '}' AS args " +
+    const sql = 'SELECT d_s.id, d_s.ts, d_s.dur, d_s.track_id, d_s.name, d_s.depth, t.name as thread_name, json_group_object(a.key, a.display_value) AS args ' +
         `FROM descendant_slice(${sliceId}) d_s LEFT JOIN args a ON d_s.arg_set_id = a.arg_set_id ` +
         'JOIN thread_track tt ON d_s.track_id = tt.id JOIN thread t ON tt.utid = t.utid ' +
         'WHERE d_s.category != "system" ' +
@@ -468,7 +469,7 @@ async function queryFlowEvents(traceQuery, slice_id) {
         `SELECT slice_in AS slice_id FROM preceding_flow(${slice_id}) ` +
         '), ' +
         'unique_slice_ids AS ( SELECT DISTINCT slice_id FROM connected_flows ) ' +
-        "SELECT s.id,  s.track_id,  s.ts,  s.dur,  s.depth, s.name, t.name as thread_name, '{' || GROUP_CONCAT(printf('\"%s\": \"%s\"', a.key, a.display_value), ', ') || '}' AS args " +
+        'SELECT s.id,  s.track_id,  s.ts,  s.dur,  s.depth, s.name, t.name as thread_name, json_group_object(a.key, a.display_value) AS args ' +
         'FROM unique_slice_ids usi ' +
         'JOIN slice s ON usi.slice_id = s.id ' +
         "LEFT JOIN args a ON s.arg_set_id = a.arg_set_id AND a.key != 'debug.url' " +
@@ -495,7 +496,7 @@ const constant_1 = __webpack_require__(7309);
 const parse_trace_event_1 = __webpack_require__(6331);
 async function queryLongTasks(traceQuery, track_id, min_duration_ms) {
     const minDurationNs = min_duration_ms * constant_1.NS_TO_MS;
-    const sql = "SELECT s.id, s.track_id, s.ts, s.dur, s.name, s.depth, t.name as thread_name, '{' || GROUP_CONCAT( printf('\"%s\": \"%s\"', a.key, a.display_value), ', ') || '}' AS args " +
+    const sql = 'SELECT s.id, s.track_id, s.ts, s.dur, s.name, s.depth, t.name as thread_name, json_group_object(a.key, a.display_value) AS args ' +
         'FROM slice s ' +
         'LEFT JOIN args a ON s.arg_set_id = a.arg_set_id ' +
         'JOIN thread_track tt ON s.track_id = tt.id JOIN thread t ON tt.utid = t.utid ' +
@@ -1087,7 +1088,7 @@ async function queryFlowIdRelatedTrace(tp, sliceId) {
       SELECT DISTINCT slice_id FROM connected_flows 
       )
       SELECT s.id, s.track_id, s.ts, s.dur, s.name,
-      '{' || GROUP_CONCAT(printf('"%s": "%s"', a.key, a.display_value), ', ') || '}' AS args,
+      json_group_object(a.key, a.display_value) AS args,
       extract_arg(s.arg_set_id, 'debug.pipeline_id') as pipelineId
       FROM unique_slice_ids usi
       JOIN slice s ON usi.slice_id = s.id
