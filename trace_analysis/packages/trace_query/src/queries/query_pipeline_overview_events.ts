@@ -151,7 +151,7 @@ async function queryFlowIdRelatedTrace(tp: TraceQuery, sliceId: number): Promise
       SELECT DISTINCT slice_id FROM connected_flows 
       )
       SELECT s.id, s.track_id, s.ts, s.dur, s.name,
-      '{' || GROUP_CONCAT(printf('"%s": "%s"', a.key, a.display_value), ', ') || '}' AS args,
+      json_group_object(a.key, a.display_value) AS args,
       extract_arg(s.arg_set_id, 'debug.pipeline_id') as pipelineId
       FROM unique_slice_ids usi
       JOIN slice s ON usi.slice_id = s.id

@@ -8,8 +8,9 @@ import { TraceQuery } from '../utils/trace_query';
 
 export async function queryById(traceQuery: TraceQuery, slice_id: number): Promise<TraceEvent[]> {
   const sql =
-    "SELECT s.id, s.ts, s.dur, s.track_id, s.name, t.name as thread_name, '{' || GROUP_CONCAT( printf('\"%s\": \"%s\"', a.key, a.display_value), ', ') || '}' AS args " +
-    `FROM slice s LEFT JOIN args a ON s.arg_set_id = a.arg_set_id JOIN thread_track tt ON s.track_id = tt.id JOIN thread t ON tt.utid = t.utid WHERE s.id = ${slice_id}`;
+    'SELECT s.id, s.ts, s.dur, s.track_id, s.name, t.name as thread_name, json_group_object(a.key, a.display_value) AS args ' +
+    `FROM slice s LEFT JOIN args a ON s.arg_set_id = a.arg_set_id JOIN thread_track tt ON s.track_id = tt.id JOIN thread t ON tt.utid = t.utid WHERE s.id = ${slice_id} ` +
+    'GROUP BY s.id';
 
   const queryResult = await traceQuery.query(sql);
   const traceEvents = parseTraceEvent(queryResult);
