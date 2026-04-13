@@ -18,7 +18,7 @@ export async function queryFlowEvents(traceQuery: TraceQuery, slice_id: number):
     `SELECT slice_in AS slice_id FROM preceding_flow(${slice_id}) ` +
     '), ' +
     'unique_slice_ids AS ( SELECT DISTINCT slice_id FROM connected_flows ) ' +
-    "SELECT s.id,  s.track_id,  s.ts,  s.dur,  s.depth, s.name, t.name as thread_name, '{' || GROUP_CONCAT(printf('\"%s\": \"%s\"', a.key, a.display_value), ', ') || '}' AS args " +
+    'SELECT s.id,  s.track_id,  s.ts,  s.dur,  s.depth, s.name, t.name as thread_name, json_group_object(a.key, a.display_value) AS args ' +
     'FROM unique_slice_ids usi ' +
     'JOIN slice s ON usi.slice_id = s.id ' +
     "LEFT JOIN args a ON s.arg_set_id = a.arg_set_id AND a.key != 'debug.url' " +

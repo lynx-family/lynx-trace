@@ -8,7 +8,7 @@ import { TraceQuery } from '../utils/trace_query';
 
 export async function queryAncestors(traceQuery: TraceQuery, sliceId: number): Promise<TraceEvent[]> {
   const sql =
-    "SELECT d_s.id, d_s.ts, d_s.dur, d_s.track_id, d_s.name, d_s.depth, t.name as thread_name, '{' || GROUP_CONCAT( printf('\"%s\": \"%s\"', a.key, a.display_value), ', ') || '}' AS args " +
+    'SELECT d_s.id, d_s.ts, d_s.dur, d_s.track_id, d_s.name, d_s.depth, t.name as thread_name, json_group_object(a.key, a.display_value) AS args ' +
     `FROM ancestor_slice(${sliceId}) d_s LEFT JOIN args a ON d_s.arg_set_id = a.arg_set_id ` +
     'JOIN thread_track tt ON d_s.track_id = tt.id JOIN thread t ON tt.utid = t.utid ' +
     'GROUP BY d_s.id ORDER BY d_s.depth, d_s.ts';
