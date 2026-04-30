@@ -290,7 +290,7 @@ async function main() {
         .requiredOption('-c, --client <clientId>', 'Client ID')
         .option('--enable-systrace', 'Enable systrace', true)
         .option('--js-profile-interval <interval>', 'JS profile interval', '-1')
-        .option('--js-profile-type <type>', 'JS profile type', 'sampling')
+        .option('--js-profile-type <type>', 'JS profile type (quickjs or v8)', 'quickjs')
         .action(async (options) => {
         const connector = new _lynx_js_devtool_connector__WEBPACK_IMPORTED_MODULE_5__/* .Connector */ .Wi(transports);
         const clientId = options.client;

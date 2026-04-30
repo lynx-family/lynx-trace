@@ -78,7 +78,7 @@ interface CommandOptions {
   client: string;
   enableSystrace?: boolean;
   jsProfileInterval?: string;
-  jsProfileType?: string;
+  jsProfileType?: 'quickjs' | 'v8';
   stream?: string;
   output?: string;
 }
@@ -129,7 +129,7 @@ async function main() {
     .requiredOption('-c, --client <clientId>', 'Client ID')
     .option('--enable-systrace', 'Enable systrace', true)
     .option('--js-profile-interval <interval>', 'JS profile interval', '-1')
-    .option('--js-profile-type <type>', 'JS profile type', 'sampling')
+    .option('--js-profile-type <type>', 'JS profile type (quickjs or v8)', 'quickjs')
     .action(async (options: CommandOptions) => {
       const connector = new DevtoolConnector(transports);
       const clientId = options.client;
