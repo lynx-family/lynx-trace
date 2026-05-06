@@ -62,6 +62,7 @@ Provide 2-5 specific, actionable recommendations sorted by priority (High/Medium
 - [nativemodule-analysis](./references/nativemodule-analysis.md): Guide for: Bridge communication, Native method latency, Serialization costs. 
 - [render-pipeline](./references/render-pipeline.md): Guide for: Understanding Lynx rendering pipeline, identifying slow stages, and analyzing gaps between metrics.
 - [sql-guide](./references/sql-guide.md): Guide for writing raw SQL queries to query trace data.
+- [sourcemap-remapping](./references/sourcemap-remapping.md): Guide for remapping line and column numbers from Lynx trace event arguments back to original source positions.
 
 ## INITIAL DECISION STRATEGIES
 
