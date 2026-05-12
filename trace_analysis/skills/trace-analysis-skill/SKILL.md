@@ -119,24 +119,6 @@ The tools in this Skill can be invoked via the following CLI commands without ad
 
 **Before using `sql`, please read the [sql-guide](./references/sql-guide.md) guide first.**
 
-#### Trace Recording Commands
-
-| Command | Description |
-|---------|-------------|
-| `list-clients` | List available clients (connected apps) |
-| `start` | Start recording a trace |
-| `end` | Stop recording and get a stream handle |
-| `readData` | Read and save the trace data from a stream |
-
-######## Common Options
-
-All trace query commands require the `-p, --path <path>` option to specify the trace file path (can be a URL or local file path).
-
-Trace recording commands support the following options:
-- `-c, --client <clientId>`: Client ID (required)
-- For `start`: `--enable-systrace`, `--js-profile-interval <interval>`, `--js-profile-type <type>`
-- For `readData`: `-s, --stream <stream>` (required), `-o, --output <path>` (output file path)
-
 #### Usage Examples
 
 ##### Trace Query Examples
