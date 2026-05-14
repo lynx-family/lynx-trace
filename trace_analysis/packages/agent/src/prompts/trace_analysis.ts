@@ -94,6 +94,13 @@ Examples: "Compare this trace with the last version", "Check for regression betw
 
 **Action:** Load [diff-analysis](./references/diff-analysis.md) with a clear description of the baseline and experiment traces.
 
+## Lynx Async Scheduling Clarification
+### Lynx async task model vs Web \`setTimeout\`
+- In Lynx traces, some asynchronous work is represented by timer-like scheduling events, and the callback chain may look similar to Web \`setTimeout\`. **Do not directly equate this with browser event loop semantics.**
+- In practice, \`setTimeout\`-like trace events in Lynx often represent a **generic async scheduling mechanism** used to defer background/script callbacks, bridge continuations, framework-managed follow-up work, or queued update triggers. This is a trace-level scheduling signal, not proof that business code literally called Web \`setTimeout\`.
+- When you see delayed update triggers before \`diffVdom\`, first determine whether the precursor is a real business timer, a NativeModule continuation, a background-thread callback, or framework-scheduled async work. Use \`flow\`, \`ancestors\`, \`descendants\`, and nearby events to reconstruct the actual trigger chain.
+- If the trace only shows timer-like scheduling without enough sub-events to distinguish the source, describe it as **Lynx async scheduling simulated by timer/setTimeout-style events** rather than asserting it is a Web timer.
+
 ## Appendix
 ## Tools
 ### trace query tools
