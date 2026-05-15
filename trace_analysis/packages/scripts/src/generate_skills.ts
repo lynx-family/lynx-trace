@@ -45,7 +45,7 @@ function generateSkill(
   } else {
     const files = fs.readdirSync(outputDir);
     for (const file of files) {
-      if (file !== 'package.json' && file !== 'scripts') {
+      if (file === 'references') {
         fs.rmSync(path.join(outputDir, file), { recursive: true, force: true });
       }
     }
