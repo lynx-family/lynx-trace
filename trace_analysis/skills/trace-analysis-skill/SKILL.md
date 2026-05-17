@@ -110,6 +110,7 @@ The tools in this Skill can be invoked via the following CLI commands without ad
 | Command | Description |
 |---------|-------------|
 | `id` | Execute trace query by slice ID |
+| `search` | Fuzzy-search trace events whose slice name or args contain the given text |
 | `time-window` | Execute time window query |
 | `aggregate` | Execute aggregate query |
 | `ancestors` | Query ancestors of a slice |
@@ -140,6 +141,12 @@ The tools in this Skill can be invoked via the following CLI commands without ad
 
   ```bash
   $ node <path_to_the_skill>/scripts/trace_query.bundle.cjs id --id 381 --path "https://example.com/trace.pftrace"
+  ```
+
+- **Fuzzy-search trace events:**
+
+  ```bash
+  $ node <path_to_the_skill>/scripts/trace_query.bundle.cjs search --text 'loadBackground' --path "https://example.com/trace.pftrace"
   ```
 
 - **Query by time window:**
