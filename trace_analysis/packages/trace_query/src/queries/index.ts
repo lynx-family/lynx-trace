@@ -6,6 +6,7 @@ export * from './query_ancestors';
 export * from './query_by_id';
 export * from './query_aggregate';
 export * from './query_by_raw_sql';
+export * from './query_by_search_text';
 export * from './query_by_time_window';
 export * from './query_descendants';
 export * from './query_flow_events';

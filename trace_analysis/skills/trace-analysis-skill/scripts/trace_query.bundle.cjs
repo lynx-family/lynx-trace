@@ -15,6 +15,7 @@ const query_aggregate_1 = __webpack_require__(8536);
 const query_ancestors_1 = __webpack_require__(4473);
 const query_by_id_1 = __webpack_require__(880);
 const query_by_raw_sql_1 = __webpack_require__(7820);
+const query_by_search_text_1 = __webpack_require__(4203);
 const query_by_time_window_1 = __webpack_require__(1323);
 const query_descendants_1 = __webpack_require__(8051);
 const query_flow_events_1 = __webpack_require__(2363);
@@ -119,6 +120,18 @@ async function main() {
         const events = await (0, query_by_id_1.queryById)(tq, id);
         const result = (0, convert_trace_event_style_1.getTreeStyleTraceEvents)(events);
         console.log('Query result:', JSON.stringify(result, null, 2));
+    }));
+    program
+        .command('search')
+        .description('Search trace events by text')
+        .option('--text <text>', 'Search text')
+        .option('-p, --path <path>', 'Trace file path (can be URL or local file)')
+        .action(wrapCommandAction('search', async (options, traceQuery) => {
+        requireOption(options.path, 'path');
+        const text = requireOption(options.text, 'text');
+        const events = await (0, query_by_search_text_1.queryBySearchText)(traceQuery, text);
+        const result = (0, convert_trace_event_style_1.getTreeStyleTraceEvents)(events);
+        console.log('Search result:', JSON.stringify(result, null, 2));
     }));
     program
         .command('time-window')
@@ -390,6 +403,51 @@ async function queryByRawSql(traceQuery, sql) {
     return queryResult;
 }
 //# sourceMappingURL=query_by_raw_sql.js.map
+
+/***/ },
+
+/***/ 4203
+(__unused_webpack_module, exports, __webpack_require__) {
+
+
+// Copyright 2026 The Lynx Authors. All rights reserved.
+// Licensed under the Apache License Version 2.0 that can be found in the
+// LICENSE file in the root directory of this source tree.
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.queryBySearchText = queryBySearchText;
+const parse_trace_event_1 = __webpack_require__(6331);
+function escapeSqlLiteral(value) {
+    return value.replace(/'/g, "''");
+}
+function escapeGlobPattern(value) {
+    return value.replace(/([*?\[])/g, '[$1]');
+}
+async function queryBySearchText(traceQuery, searchText) {
+    const trimmedSearchText = searchText.trim();
+    if (!trimmedSearchText) {
+        return [];
+    }
+    const normalizedSearchText = trimmedSearchText.toLowerCase();
+    const globPattern = `*${escapeSqlLiteral(escapeGlobPattern(normalizedSearchText))}*`;
+    const sql = 'WITH matched_slices AS ( ' +
+        'SELECT s.id ' +
+        'FROM slice s ' +
+        'LEFT JOIN args a ON s.arg_set_id = a.arg_set_id ' +
+        `WHERE lower(s.name) GLOB '${globPattern}' OR lower(a.string_value) GLOB '${globPattern}' OR lower(a.display_value) GLOB '${globPattern}' OR lower(a.key) GLOB '${globPattern}' ` +
+        'GROUP BY s.id ' +
+        ') ' +
+        'SELECT s.id, s.track_id, s.ts, s.dur, s.name, s.depth, t.name as thread_name, json_group_object(a.key, a.display_value) AS args ' +
+        'FROM matched_slices ms ' +
+        'JOIN slice s ON ms.id = s.id ' +
+        'LEFT JOIN args a ON s.arg_set_id = a.arg_set_id ' +
+        'JOIN thread_track tt ON s.track_id = tt.id ' +
+        'JOIN thread t ON tt.utid = t.utid ' +
+        'GROUP BY s.id, s.track_id, s.ts, s.dur, s.name, s.depth, t.name ' +
+        'ORDER BY s.ts';
+    const queryResult = await traceQuery.query(sql);
+    return (0, parse_trace_event_1.parseTraceEvent)(queryResult);
+}
+//# sourceMappingURL=query_by_search_text.js.map
 
 /***/ },
 
