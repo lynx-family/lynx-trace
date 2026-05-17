@@ -8,6 +8,7 @@ import { queryAggregate } from '../queries/query_aggregate';
 import { queryAncestors } from '../queries/query_ancestors';
 import { queryById } from '../queries/query_by_id';
 import { queryByRawSql } from '../queries/query_by_raw_sql';
+import { queryBySearchText } from '../queries/query_by_search_text';
 import { queryByTimeWindow } from '../queries/query_by_time_window';
 import { queryDescendants } from '../queries/query_descendants';
 import { queryFlowEvents } from '../queries/query_flow_events';
@@ -25,6 +26,7 @@ import { TraceQuery } from '../utils/trace_query';
 interface CommandOptions {
   path?: string;
   id?: string;
+  text?: string;
   start?: string;
   end?: string;
   track?: string;
@@ -139,6 +141,26 @@ async function main() {
 
         console.log('Query result:', JSON.stringify(result, null, 2));
       }),
+    );
+
+  program
+    .command('search')
+    .description('Search trace events by text')
+    .option('--text <text>', 'Search text')
+    .option('-p, --path <path>', 'Trace file path (can be URL or local file)')
+    .action(
+      wrapCommandAction(
+        'search',
+        async (options: CommandOptions, traceQuery: TraceQuery) => {
+          requireOption(options.path, 'path');
+          const text = requireOption(options.text, 'text');
+
+          const events = await queryBySearchText(traceQuery, text);
+          const result = getTreeStyleTraceEvents(events);
+
+          console.log('Search result:', JSON.stringify(result, null, 2));
+        },
+      ),
     );
 
   program

@@ -13,13 +13,17 @@ pnpm add @lynx-js/trace-query
 ### Programmatic
 
 ```typescript
-import { TraceQuery, queryById, queryByTimeWindow } from '@lynx-js/trace-query';
+import { TraceQuery, queryById, queryBySearchText, queryByTimeWindow } from '@lynx-js/trace-query';
 
 const traceQuery = new TraceQuery();
 await traceQuery.initProcessor('/path/to/trace.pftrace');
 
 // Query by ID
 const slice = await queryById(traceQuery, 123);
+
+// Search slices by text across slice names, arg keys, and arg values.
+// Numeric text also matches the exact slice ID.
+const matches = await queryBySearchText(traceQuery, 'Card');
 
 // Query by time window
 const slices = await queryByTimeWindow(traceQuery, 1000, 2000);
@@ -35,6 +39,9 @@ node dist/cli/index.js --help
 
 # Query by slice ID
 node dist/cli/index.js id --id 381 --path "https://example.com/trace.pftrace"
+
+# Search slices by text
+node dist/cli/index.js search --text "Card" --path "/path/to/trace.pftrace"
 
 # Query by time window
 node dist/cli/index.js time-window --start 1000 --end 2000 --path "/path/to/trace.pftrace"
@@ -60,6 +67,7 @@ node dist/cli/index.js long-tasks --track 6 --duration 16 --path "/path/to/trace
 | Command | Description |
 |---------|-------------|
 | `id` | Query slice by ID |
+| `search` | Fuzzy-search trace events whose slice name or args contain the given text |
 | `time-window` | Query slices within a time range |
 | `aggregate` | Aggregate events by name |
 | `ancestors` | Query ancestor slices |
@@ -81,6 +89,7 @@ All commands require `-p, --path <path>` to specify the trace file (URL or local
 | Method | Description |
 |--------|-------------|
 | `queryById` | Query a slice by its ID |
+| `queryBySearchText` | Search slices by text across names, args, and exact numeric IDs |
 | `queryByTimeWindow` | Query slices within a time window |
 | `queryAggregate` | Aggregate events by name pattern |
 | `queryAncestors` | Get ancestor slices |
