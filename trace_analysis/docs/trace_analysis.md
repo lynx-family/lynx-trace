@@ -61,6 +61,7 @@ Provide 2-5 specific, actionable recommendations sorted by priority (High/Medium
 - [diff-analysis](./references/diff-analysis.md): Guide for: Comparing two traces, identifying regressions in specific phases.
 - [nativemodule-analysis](./references/nativemodule-analysis.md): Guide for: Bridge communication, Native method latency, Serialization costs. 
 - [render-pipeline](./references/render-pipeline.md): Guide for: Understanding Lynx rendering pipeline, identifying slow stages, and analyzing gaps between metrics.
+- [event-analysis](./references/event-analysis.md): Guide for: Diagnosing missing touch/custom/global events, tracing event dispatch to the real business handler, and distinguishing event delivery delay from handler cost.
 - [sql-guide](./references/sql-guide.md): Guide for writing raw SQL queries to query trace data.
 - [sourcemap-remapping](./references/sourcemap-remapping.md): Guide for remapping line and column numbers from Lynx trace event arguments back to original source positions.
 
@@ -76,6 +77,7 @@ Examples: "Why is FMP slow?", "Analyze the jank in this scroll.", "Why is there 
 - [metrics-analysis](./references/metrics-analysis.md) for FCP/FMP/TTI, white screen, slow first frame, slow load, high latency.
 - [jank-analysis](./references/jank-analysis.md) for jank, lag, frame drops, stuttering, smoothness issues.
 - [nativemodule-analysis](./references/nativemodule-analysis.md) for NativeModule latency, bridge communication issues.
+- [event-analysis](./references/event-analysis.md) for event not firing, tap/click/touch not responding, custom event dispatch issues, GlobalEventEmitter issues, or slow event response.
 - [timing-flag](./references/timing-flag.md) for diagnosing missing timing/performance callbacks, invalid timing flags, and abnormal ActualFMP durations.
 
 ### Broad, Exploratory Queries
