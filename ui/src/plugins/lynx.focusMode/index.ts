@@ -41,6 +41,7 @@ import LynxThreadGroupPlugin from '../lynx.ThreadGroups';
 import FrameJankPlugin from '../lynx.frameJank';
 import LynxNativeModule from '../lynx.nativemodule';
 import {eventLoggerState} from '../../event_logger';
+import {focusModeFilterKey} from './filter_key';
 
 export default class FocusMode implements PerfettoPlugin {
   static readonly id = 'lynx.FocusMode';
@@ -51,6 +52,7 @@ export default class FocusMode implements PerfettoPlugin {
     LynxNativeModule,
     FrameJankPlugin,
   ];
+  private appliedFilterKey = '';
 
   async onTraceLoad(trace: Trace): Promise<void> {
     await this.queryLoadBundle(trace);
@@ -315,10 +317,22 @@ export default class FocusMode implements PerfettoPlugin {
 
   private async filterSpecificInstanceId(trace: Trace) {
     // Step 1: Get trackId to count map
+    const selectedInstanceIds =
+      lynxPerfGlobals.state.selectedLynxviewInstances.map(
+        (item) => item.instanceId,
+      );
+    const filterKey = focusModeFilterKey(
+      lynxPerfGlobals.state.selectedLynxviewInstances,
+      lynxPerfGlobals.state.highlightNoInstanceIdTrace,
+    );
+    if (filterKey === this.appliedFilterKey) {
+      return;
+    }
+    this.appliedFilterKey = filterKey;
     const trackIdToCountMap = await this.getTrackIdToCountMap(trace);
     // Step 2: Prepare instanceId array and query condition
-    const instanceIdArray = lynxPerfGlobals.state.selectedLynxviewInstances
-      .map((item) => `'${item.instanceId}'`)
+    const instanceIdArray = selectedInstanceIds
+      .map((instanceId) => `'${instanceId}'`)
       .join(',');
     const otherSlicesQuery = lynxPerfGlobals.state.highlightNoInstanceIdTrace
       ? ' AND i.slice_id IS NOT NULL'

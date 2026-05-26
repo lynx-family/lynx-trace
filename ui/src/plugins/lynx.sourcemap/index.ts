@@ -25,15 +25,28 @@ import {ArgsDict, getArgs} from '../../components/sql_utils/args';
 import {asArgSetId} from '../../components/sql_utils/core_types';
 import {SourceMapDecodePopupImpl} from './source_map_decode_popup';
 import LynxSourceFilePlugin from '../../plugins/lynx.sourcefile';
+import {getFirstArg, getFirstStringArg} from '../../lynx_perf/trace_utils';
 
 interface EvaluatePreparedJavaScript {
   url: string;
   runtimeId: string;
 }
 
-function getStringArg(args: ArgsDict, key: string): string | undefined {
-  const value = args[key];
-  return typeof value === 'string' ? value : undefined;
+export function getSourceMapUrl(args: ArgsDict): string {
+  return getFirstStringArg(args, [
+    'debug.url',
+    'debug.source_url',
+    'args.url',
+    'args.source_url',
+  ]);
+}
+
+export function getSourceMapRuntimeId(args: ArgsDict): string {
+  const runtimeId = getFirstArg(args, ['debug.runtime_id', 'args.runtime_id']);
+  if (typeof runtimeId === 'number' || typeof runtimeId === 'string') {
+    return `${runtimeId}`;
+  }
+  return '';
 }
 
 export default class LynxSourceMapPlugin implements PerfettoPlugin {
@@ -75,16 +88,8 @@ export default class LynxSourceMapPlugin implements PerfettoPlugin {
     for (; it.valid(); it.next()) {
       const args = await getArgs(engine, asArgSetId(it.argSetId));
       const trackId = it.trackId;
-      const url =
-        getStringArg(args, 'debug.url') ??
-        getStringArg(args, 'debug.source_url') ??
-        getStringArg(args, 'args.url') ??
-        getStringArg(args, 'args.source_url') ??
-        '';
-      const runtimeId =
-        getStringArg(args, 'debug.runtime_id') ??
-        getStringArg(args, 'args.runtime_id') ??
-        '';
+      const url = getSourceMapUrl(args);
+      const runtimeId = getSourceMapRuntimeId(args);
       if (
         runtimeId !== '' &&
         url.indexOf('lynx_core.js') === -1 &&

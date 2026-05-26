@@ -27,7 +27,6 @@ import {
 } from './utils';
 import ElementManager from './element_manager';
 import {Engine} from '../../trace_processor/engine';
-import {TrackNode} from '../../public/workspace';
 import {getArgs} from '../../components/sql_utils/args';
 import {asArgSetId} from '../../components/sql_utils/core_types';
 import {IssueRank, IssueSummary} from '../../lynx_perf/types';
@@ -43,12 +42,6 @@ import {
 import {LynxElement} from '../../lynx_perf/common_components/element_tree/types';
 import {stringToJsonObject} from '../../lynx_perf/string_utils';
 import ProcessThreadGroupsPlugin from '../dev.perfetto.ProcessThreadGroups';
-import {isLynxBackgroundScriptThreadGroup} from '../../lynx_perf/track_utils';
-import {ThreadSortOrder} from '../../lynx_perf/thread_order';
-import {
-  addIssueTrackAboveVitalTimestamp,
-  getFirstIssueProcessGroup,
-} from '../../lynx_perf/issue_track_utils';
 
 /**
  * Lynx Element Performance Analysis Plugin
@@ -115,7 +108,6 @@ export default class LynxElementPlugin implements PerfettoPlugin {
       uri: LYNX_PERF_ELEMENT_PLUGIN_ID,
       renderer: new LynxElementIssueTrack(),
     });
-    this.addIssueTrack(ctx, domIssues);
   }
 
   /**
@@ -188,44 +180,12 @@ export default class LynxElementPlugin implements PerfettoPlugin {
     return data;
   }
 
-  private addIssueTrack(ctx: Trace, domIssues: IssueSummary[]) {
-    if (domIssues.length === 0) {
-      return;
-    }
-    const issueTrack = new TrackNode({
-      uri: LYNX_PERF_ELEMENT_PLUGIN_ID,
-      name: 'Lynx Element Issues',
-      sortOrder: ThreadSortOrder.PERFORMANCE_ISSUES,
-    });
-    const processGroup = this.getProcessGroupForIssues(ctx, domIssues);
-    if (processGroup !== undefined) {
-      addIssueTrackAboveVitalTimestamp(processGroup, issueTrack, domIssues);
-      return;
-    }
-    const lynxGroup = ctx.currentWorkspace.children.find((item) =>
-      isLynxBackgroundScriptThreadGroup(item),
-    );
-    if (lynxGroup !== undefined) {
-      addIssueTrackAboveVitalTimestamp(lynxGroup, issueTrack, domIssues);
-    }
-  }
-
-  private getProcessGroupForIssues(
-    ctx: Trace,
-    domIssues: IssueSummary[],
-  ): TrackNode | undefined {
-    const processGroups = ctx.plugins.getPlugin(ProcessThreadGroupsPlugin);
-    return getFirstIssueProcessGroup(domIssues, (upid) =>
-      processGroups.getGroupForProcess(upid),
-    );
-  }
-
   /**
    * Analyzes element tree for performance issues
    * @param root - Root element of the tree to analyze
    * @param instanceId - Unique identifier for this element tree instance
    * @returns Array of problematic elements
-   * @remarks
+   *
    * Detects three types of issues:
    * 1. Deeply nested nodes
    * 2. Invisible nodes
