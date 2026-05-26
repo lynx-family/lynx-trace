@@ -207,6 +207,107 @@ class TrackEvent(TestSuite):
         """,
         out=Path('track_event_typed_args_args.out'))
 
+  def test_track_event_lynx_instance_url_args(self):
+    return DiffTestBlueprint(
+        trace=TextProto(r"""
+        packet {
+          trusted_packet_sequence_id: 1
+          timestamp: 0
+          incremental_state_cleared: true
+          track_descriptor {
+            uuid: 1
+            thread {
+              pid: 5
+              tid: 1
+              thread_name: "t1"
+            }
+          }
+        }
+        packet {
+          trusted_packet_sequence_id: 1
+          timestamp: 1000
+          track_event {
+            track_uuid: 1
+            categories: "cat"
+            name: "LoadJSApp"
+            type: 3
+            debug_annotations {
+              name: "instance_id"
+              uint_value: 100
+            }
+            debug_annotations {
+              name: "url"
+              string_value: "https://example.com/main.lynx"
+            }
+          }
+        }
+        packet {
+          trusted_packet_sequence_id: 1
+          timestamp: 2000
+          track_event {
+            track_uuid: 1
+            categories: "cat"
+            name: "ExplicitInstanceSlice"
+            type: 3
+            debug_annotations {
+              name: "instance_id"
+              uint_value: 100
+            }
+          }
+        }
+        packet {
+          trusted_packet_sequence_id: 1
+          timestamp: 3000
+          track_event {
+            track_uuid: 1
+            categories: "cat"
+            name: "ParentWithInstance"
+            type: 1
+            debug_annotations {
+              name: "instance_id"
+              uint_value: 100
+            }
+          }
+        }
+        packet {
+          trusted_packet_sequence_id: 1
+          timestamp: 4000
+          track_event {
+            track_uuid: 1
+            categories: "cat"
+            name: "ChildInheritsInstance"
+            type: 3
+          }
+        }
+        packet {
+          trusted_packet_sequence_id: 1
+          timestamp: 5000
+          track_event {
+            track_uuid: 1
+            type: 2
+          }
+        }
+        """),
+        query="""
+        SELECT
+          slice.name,
+          extract_arg(slice.arg_set_id, 'debug.instance_id') AS instance_id,
+          extract_arg(slice.arg_set_id, 'debug.url') AS url
+        FROM slice
+        WHERE slice.name IN (
+          'ExplicitInstanceSlice',
+          'ParentWithInstance',
+          'ChildInheritsInstance'
+        )
+        ORDER BY slice.ts;
+        """,
+        out=Csv("""
+        "name","instance_id","url"
+        "ExplicitInstanceSlice",100,"https://example.com/main.lynx"
+        "ParentWithInstance",100,"https://example.com/main.lynx"
+        "ChildInheritsInstance","100","https://example.com/main.lynx"
+        """))
+
   # Track handling
   def test_track_event_tracks_slices(self):
     return DiffTestBlueprint(

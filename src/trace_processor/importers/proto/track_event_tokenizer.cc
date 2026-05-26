@@ -742,8 +742,7 @@ base::Status TrackEventTokenizer::HandleExtraArgsValues(
       context_->storage->AddPipelineFlag(pipeline_id, "Lynx FCP");
       pipeline_id.clear();
     }
-    if (!instance_id.empty() && !url.empty() &&
-        event_name == "LynxLoadTemplate") {
+    if (!instance_id.empty() && !url.empty()) {
       context_->storage->SetInstanceUrl(instance_id, url);
       instance_id.clear();
       url.clear();
