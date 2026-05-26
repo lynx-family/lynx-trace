@@ -518,6 +518,7 @@ ${orderByClause}`.trim();
       const min = config.minValue;
       const size = config.bucketSize;
       const max = min + bucketCount * size;
+      const sizeSql = sqlNumberLiteral(size);
       return `
 WITH _data AS (
   SELECT ${col} AS _value
@@ -528,7 +529,7 @@ SELECT
   ${min} AS _min,
   ${max} AS _max,
   (SELECT COUNT(*) FROM _data) AS _total,
-  MIN(${bucketCount - 1}, MAX(0, CAST((_value - ${min}) / ${size}.0 AS INT))) AS _bucket_idx,
+  MIN(${bucketCount - 1}, MAX(0, CAST((_value - ${min}) / ${sizeSql} AS INT))) AS _bucket_idx,
   COUNT(*) AS _count
 FROM _data
 GROUP BY _bucket_idx
@@ -638,6 +639,13 @@ ORDER BY _bucket_idx`.trim();
 
 function sqlCastType(cast: 'real' | 'text'): string {
   return cast === 'real' ? 'REAL' : 'TEXT';
+}
+
+function sqlNumberLiteral(value: number): string {
+  if (!Number.isFinite(value)) {
+    throw new Error(`Invalid SQL number literal: ${value}`);
+  }
+  return String(value);
 }
 
 /**

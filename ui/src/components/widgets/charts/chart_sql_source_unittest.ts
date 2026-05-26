@@ -473,6 +473,19 @@ test('histogram: with range filter', () => {
   expect(norm).toContain('WHERE (dur >= 100) AND (dur <= 5000)');
 });
 
+test('histogram: fixed fractional bucket size produces valid SQL', () => {
+  const sql = build({
+    type: 'histogram',
+    valueColumn: 'dur',
+    bucketCount: 1,
+    bucketSize: 0.02,
+    minValue: 5288230,
+  });
+  const norm = normalizeWhitespace(sql);
+  expect(norm).toContain('/ 0.02 AS INT');
+  expect(norm).not.toContain('0.02.0');
+});
+
 test('histogram: throws for unknown column', () => {
   expect(() =>
     build({
