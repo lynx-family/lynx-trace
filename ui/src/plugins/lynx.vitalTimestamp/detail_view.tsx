@@ -31,10 +31,8 @@ import {chart} from '../../metrics_chart';
 import {TTraceEvent} from '../../metrics_chart/types';
 import {LynxElement} from '../../lynx_perf/common_components/element_tree/types';
 import {ElementTreeView} from '../../lynx_perf/common_components/element_tree/element_tree_view';
-import {getSlice, SliceDetails} from '../../components/sql_utils/slice';
-import {sliceRef} from '../../components/widgets/slice';
+import {SliceDetails} from '../../components/sql_utils/slice';
 import {Trace} from '../../public/trace';
-import {asSliceSqlId} from '../../components/sql_utils/core_types';
 import {CRUCIAL_TIMING_KEYS} from '../../lynx_perf/constants';
 
 export interface VitalTimestampDetailAttr {
@@ -97,21 +95,6 @@ export class VitalTimestampDetailView
   }
 }
 
-class SliceRefWrapper implements m.ClassComponent<{trace: Trace; id: number}> {
-  private slice?: SliceDetails;
-
-  async oninit({attrs}: m.CVnode<{trace: Trace; id: number}>) {
-    this.slice = await getSlice(attrs.trace.engine, asSliceSqlId(attrs.id));
-    m.redraw();
-  }
-
-  view({attrs}: m.CVnode<{trace: Trace; id: number}>) {
-    return this.slice === undefined
-      ? `${attrs.id}`
-      : sliceRef(attrs.trace, this.slice, `${attrs.id}`);
-  }
-}
-
 /**
  * Vital Timestamp Detail Panel (React)
  *
@@ -139,6 +122,22 @@ export class DetailViewPanel extends Component<
     this.createChartInstance = this.createChartInstance.bind(this);
     this.closeDialog = this.closeDialog.bind(this);
     this.showDialog = this.showDialog.bind(this);
+  }
+
+  private renderSliceRef(id: number) {
+    return (
+      <a
+        className="pf-anchor"
+        title="Go to slice"
+        onClick={(event) => {
+          event.preventDefault();
+          this.props.trace.selection.selectSqlEvent('slice', id, {
+            scrollToSelection: true,
+          });
+        }}>
+        {id}
+      </a>
+    );
   }
 
   /**
@@ -201,7 +200,7 @@ export class DetailViewPanel extends Component<
    * 3. Detailed stage breakdown table
    */
   render() {
-    const {pipelineStagesDetail, sliceDetail, trace} = this.props;
+    const {pipelineStagesDetail, sliceDetail} = this.props;
     if (
       !pipelineStagesDetail ||
       pipelineStagesDetail.length <= 0 ||
@@ -238,25 +237,13 @@ export class DetailViewPanel extends Component<
         title: <TableColumnTitle title="Start slice" />,
         dataIndex: 'id',
         key: 'id',
-        render: (value: number, _record: unknown, _index: number) => (
-          <MithrilReactWrapper
-            component={SliceRefWrapper}
-            trace={trace}
-            id={value}
-          />
-        ),
+        render: (value: number) => this.renderSliceRef(value),
       },
       {
         title: <TableColumnTitle title="End slice" />,
         dataIndex: 'endId',
         key: 'endId',
-        render: (value: number, _record: unknown, _index: number) => (
-          <MithrilReactWrapper
-            component={SliceRefWrapper}
-            trace={trace}
-            id={value}
-          />
-        ),
+        render: (value: number) => this.renderSliceRef(value),
       },
     ];
 
