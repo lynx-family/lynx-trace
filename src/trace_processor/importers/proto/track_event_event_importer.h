@@ -1466,15 +1466,6 @@ class TrackEventEventImporter {
     bool is_paint_end_event = false;
     bool is_android_platform_measure_layout_draw_event = false;
     bool has_instance_id_parameter = false;
-    auto add_url_for_instance_id =
-        [this, &args_writer](const std::string& instance_id) {
-          auto url = context_->storage->GetInstanceUrl(instance_id);
-          if (!url) {
-            return;
-          }
-          auto debug_key = parser_->args_parser_.EnterDictionary("url");
-          args_writer.AddString(debug_key.key(), *url);
-        };
     if (!name.empty() &&
         strcmp(name.c_str(), BindPipelineIDWithTimingFlag) == 0) {
       is_timing_flag_event = true;
@@ -1556,12 +1547,10 @@ class TrackEventEventImporter {
         has_instance_id_parameter = true;
         context_->storage->SetInstanceIdForSlice(inserter->GetRow(), id);
       }
-      add_url_for_instance_id(id);
     }
 
     const std::string inherited_instance_id = inserter->GetInstanceId();
     if (!has_instance_id_parameter && !inherited_instance_id.empty()) {
-      add_url_for_instance_id(inherited_instance_id);
       auto debug_key = parser_->args_parser_.EnterDictionary("instance_id");
       args_writer.AddString(debug_key.key(), inherited_instance_id);
     }

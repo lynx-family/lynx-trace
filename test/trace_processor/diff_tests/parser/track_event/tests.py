@@ -275,13 +275,31 @@ class TrackEvent(TestSuite):
           track_event {
             track_uuid: 1
             categories: "cat"
+            name: "ExplicitUrlSlice"
+            type: 3
+            debug_annotations {
+              name: "instance_id"
+              uint_value: 100
+            }
+            debug_annotations {
+              name: "url"
+              string_value: "https://example.com/explicit.lynx"
+            }
+          }
+        }
+        packet {
+          trusted_packet_sequence_id: 1
+          timestamp: 5000
+          track_event {
+            track_uuid: 1
+            categories: "cat"
             name: "ChildInheritsInstance"
             type: 3
           }
         }
         packet {
           trusted_packet_sequence_id: 1
-          timestamp: 5000
+          timestamp: 6000
           track_event {
             track_uuid: 1
             type: 2
@@ -295,17 +313,21 @@ class TrackEvent(TestSuite):
           extract_arg(slice.arg_set_id, 'debug.url') AS url
         FROM slice
         WHERE slice.name IN (
+          'LoadJSApp',
           'ExplicitInstanceSlice',
           'ParentWithInstance',
+          'ExplicitUrlSlice',
           'ChildInheritsInstance'
         )
         ORDER BY slice.ts;
         """,
         out=Csv("""
         "name","instance_id","url"
-        "ExplicitInstanceSlice",100,"https://example.com/main.lynx"
-        "ParentWithInstance",100,"https://example.com/main.lynx"
-        "ChildInheritsInstance","100","https://example.com/main.lynx"
+        "LoadJSApp",100,"https://example.com/main.lynx"
+        "ExplicitInstanceSlice",100,"[NULL]"
+        "ParentWithInstance",100,"[NULL]"
+        "ExplicitUrlSlice",100,"https://example.com/explicit.lynx"
+        "ChildInheritsInstance","100","[NULL]"
         """))
 
   # Track handling
