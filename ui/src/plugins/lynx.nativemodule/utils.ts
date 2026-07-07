@@ -72,3 +72,70 @@ export function isNativeModuleCall(name: string) {
     name === NATIVEMODULE_NETWORK_REQUEST
   );
 }
+
+export interface NativeModuleCallInfo {
+  ts: number;
+  dur: number;
+  flowId: number;
+  moduleName: string;
+  methodName: string;
+  url: string;
+}
+
+export interface NativeModuleNetworkRequestInfo {
+  ts: number;
+  flowId: number;
+  moduleName: string;
+  methodName: string;
+  url: string;
+}
+
+function isSameNativeModule(
+  call: NativeModuleCallInfo,
+  request: NativeModuleNetworkRequestInfo,
+) {
+  return (
+    call.moduleName !== '' &&
+    call.methodName !== '' &&
+    call.moduleName === request.moduleName &&
+    call.methodName === request.methodName
+  );
+}
+
+function isRequestInCallRange(
+  call: NativeModuleCallInfo,
+  request: NativeModuleNetworkRequestInfo,
+) {
+  return request.ts >= call.ts && request.ts <= call.ts + call.dur;
+}
+
+export function attachNetworkRequestUrlsToNativeModules(
+  calls: NativeModuleCallInfo[],
+  requests: NativeModuleNetworkRequestInfo[],
+) {
+  for (const call of calls) {
+    if (call.url) {
+      continue;
+    }
+    const flowMatchedRequest = requests.find((request) => {
+      return (
+        request.url !== '' &&
+        call.flowId !== 0 &&
+        call.flowId === request.flowId &&
+        isSameNativeModule(call, request)
+      );
+    });
+    const rangeMatchedRequest =
+      flowMatchedRequest ??
+      requests.find((request) => {
+        return (
+          request.url !== '' &&
+          isSameNativeModule(call, request) &&
+          isRequestInCallRange(call, request)
+        );
+      });
+    if (rangeMatchedRequest !== undefined) {
+      call.url = rangeMatchedRequest.url;
+    }
+  }
+}

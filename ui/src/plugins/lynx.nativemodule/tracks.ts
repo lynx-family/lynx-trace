@@ -52,7 +52,10 @@ import {NativeModuleDetailsPanel} from './details';
 import {AppImpl} from '../../core/app_impl';
 import {getColorForSlice, UNEXPECTED_PINK} from '../../components/colorizer';
 import {formatDuration} from '../../components/time_utils';
-import {isNativeModuleCall} from './utils';
+import {
+  attachNetworkRequestUrlsToNativeModules,
+  isNativeModuleCall,
+} from './utils';
 import {stringToJsonObject} from '../../lynx_perf/string_utils';
 import {HSLColor} from '../../base/color';
 
@@ -137,6 +140,7 @@ export class LynxNativeModuleTrack extends LynxBaseTrack<NativeModuleItem[]> {
 
     const traceIdToJSBMap = new Map();
     const flowIdToTraceIdMap = new Map();
+    const networkRequestMap = new Map();
 
     let nativeModuleBeginTs = -1;
     let nativeModuleEndTs = -1;
@@ -165,6 +169,18 @@ export class LynxNativeModuleTrack extends LynxBaseTrack<NativeModuleItem[]> {
           callbackStartTs: 0,
         });
       }
+      if (
+        it.name === NATIVEMODULE_NETWORK_REQUEST &&
+        networkRequestMap.get(it.id) === undefined
+      ) {
+        networkRequestMap.set(it.id, {
+          ts: it.ts,
+          flowId: 0,
+          moduleName: '',
+          methodName: '',
+          url: '',
+        });
+      }
 
       if (
         isNativeModuleCall(it.name) &&
@@ -175,6 +191,16 @@ export class LynxNativeModuleTrack extends LynxBaseTrack<NativeModuleItem[]> {
         flowIdToTraceIdMap.set(flowId, it.id);
         const startJSB = traceIdToJSBMap.get(it.id);
         startJSB.flowId = flowId;
+      }
+      if (
+        it.name === NATIVEMODULE_NETWORK_REQUEST &&
+        it.key === 'debug.flowId' &&
+        it.intValue != null
+      ) {
+        const networkRequest = networkRequestMap.get(it.id);
+        if (networkRequest !== undefined) {
+          networkRequest.flowId = Number(it.intValue);
+        }
       }
 
       // In certain cases, "JSBTiming::Flush" may not exist. Here, we change the endpoint to the maximum of 'JSBTiming::jsb_func_platform_method_end' or 'JSBTiming::jsb_callback_call_end'.
@@ -212,8 +238,14 @@ export class LynxNativeModuleTrack extends LynxBaseTrack<NativeModuleItem[]> {
         it.key === 'debug.url'
       ) {
         const startJSB = traceIdToJSBMap.get(it.id);
-        startJSB.url = it.stringValue;
-        startJSB.firstArg = 'NetworkRequest';
+        if (startJSB !== undefined) {
+          startJSB.url = it.stringValue;
+          startJSB.firstArg = 'NetworkRequest';
+        }
+        const networkRequest = networkRequestMap.get(it.id);
+        if (networkRequest !== undefined) {
+          networkRequest.url = it.stringValue || '';
+        }
       } else if (it.key === 'debug.arg1') {
         try {
           const arg1 = JSON.parse(it.stringValue as string);
@@ -227,12 +259,28 @@ export class LynxNativeModuleTrack extends LynxBaseTrack<NativeModuleItem[]> {
         }
       } else if (it.key === 'debug.module_name') {
         const startJSB = traceIdToJSBMap.get(it.id);
-        startJSB.moduleName = it.stringValue;
+        if (startJSB !== undefined) {
+          startJSB.moduleName = it.stringValue;
+        }
+        const networkRequest = networkRequestMap.get(it.id);
+        if (networkRequest !== undefined) {
+          networkRequest.moduleName = it.stringValue || '';
+        }
       } else if (it.key === 'debug.method_name') {
         const startJSB = traceIdToJSBMap.get(it.id);
-        startJSB.methodName = it.stringValue;
+        if (startJSB !== undefined) {
+          startJSB.methodName = it.stringValue;
+        }
+        const networkRequest = networkRequestMap.get(it.id);
+        if (networkRequest !== undefined) {
+          networkRequest.methodName = it.stringValue || '';
+        }
       }
     }
+    attachNetworkRequestUrlsToNativeModules(
+      Array.from(traceIdToJSBMap.values()),
+      Array.from(networkRequestMap.values()),
+    );
     const sortedJsb = Array.from(traceIdToJSBMap.keys())
       .sort((a, b) => a - b)
       .map((key) => traceIdToJSBMap.get(key));
@@ -255,6 +303,7 @@ export class LynxNativeModuleTrack extends LynxBaseTrack<NativeModuleItem[]> {
     });
     traceIdToJSBMap.clear();
     flowIdToTraceIdMap.clear();
+    networkRequestMap.clear();
     return data;
   }
 
@@ -289,6 +338,7 @@ export class LynxNativeModuleTrack extends LynxBaseTrack<NativeModuleItem[]> {
 
     const traceIdToJSBMap = new Map();
     const flowIdToTraceIdMap = new Map();
+    const networkRequestMap = new Map();
 
     for (; it.valid(); it.next()) {
       if (
@@ -311,6 +361,18 @@ export class LynxNativeModuleTrack extends LynxBaseTrack<NativeModuleItem[]> {
           callbackStartTs: 0, // start ts of 'NATIVEMODULE_CALLBACK'
         });
       }
+      if (
+        it.name === NATIVEMODULE_NETWORK_REQUEST &&
+        networkRequestMap.get(it.id) === undefined
+      ) {
+        networkRequestMap.set(it.id, {
+          ts: it.ts,
+          flowId: 0,
+          moduleName: '',
+          methodName: '',
+          url: '',
+        });
+      }
 
       // update flowId
       if (
@@ -322,6 +384,16 @@ export class LynxNativeModuleTrack extends LynxBaseTrack<NativeModuleItem[]> {
         flowIdToTraceIdMap.set(flowId, it.id);
         const startJSB = traceIdToJSBMap.get(it.id);
         startJSB.flowId = flowId;
+      }
+      if (
+        it.name === NATIVEMODULE_NETWORK_REQUEST &&
+        it.key === 'debug.flowId' &&
+        it.intValue != null
+      ) {
+        const networkRequest = networkRequestMap.get(it.id);
+        if (networkRequest !== undefined) {
+          networkRequest.flowId = Number(it.intValue);
+        }
       }
 
       // update duration if possible
@@ -354,6 +426,10 @@ export class LynxNativeModuleTrack extends LynxBaseTrack<NativeModuleItem[]> {
           startJSB.url = it.stringValue;
           startJSB.firstArg = 'NetworkRequest';
         }
+        const networkRequest = networkRequestMap.get(it.id);
+        if (networkRequest !== undefined) {
+          networkRequest.url = it.stringValue || '';
+        }
       } else if (it.name === NATIVEMODULE_INVOKE && it.key === 'debug.arg1') {
         const arg1 = stringToJsonObject(it.stringValue as string);
         if (arg1.data !== undefined && arg1.data.url !== undefined) {
@@ -371,6 +447,14 @@ export class LynxNativeModuleTrack extends LynxBaseTrack<NativeModuleItem[]> {
           startJSB.moduleName = it.stringValue;
         }
       } else if (
+        it.name === NATIVEMODULE_NETWORK_REQUEST &&
+        it.key === 'debug.module_name'
+      ) {
+        const networkRequest = networkRequestMap.get(it.id);
+        if (networkRequest !== undefined) {
+          networkRequest.moduleName = it.stringValue || '';
+        }
+      } else if (
         it.name === NATIVEMODULE_INVOKE &&
         it.key === 'debug.method_name'
       ) {
@@ -378,8 +462,20 @@ export class LynxNativeModuleTrack extends LynxBaseTrack<NativeModuleItem[]> {
         if (startJSB !== undefined) {
           startJSB.methodName = it.stringValue;
         }
+      } else if (
+        it.name === NATIVEMODULE_NETWORK_REQUEST &&
+        it.key === 'debug.method_name'
+      ) {
+        const networkRequest = networkRequestMap.get(it.id);
+        if (networkRequest !== undefined) {
+          networkRequest.methodName = it.stringValue || '';
+        }
       }
     }
+    attachNetworkRequestUrlsToNativeModules(
+      Array.from(traceIdToJSBMap.values()),
+      Array.from(networkRequestMap.values()),
+    );
     const sortedJsb = Array.from(traceIdToJSBMap.keys())
       .sort((a, b) => a - b)
       .map((key) => traceIdToJSBMap.get(key));
@@ -402,6 +498,7 @@ export class LynxNativeModuleTrack extends LynxBaseTrack<NativeModuleItem[]> {
     });
     traceIdToJSBMap.clear();
     flowIdToTraceIdMap.clear();
+    networkRequestMap.clear();
     return data;
   }
 
