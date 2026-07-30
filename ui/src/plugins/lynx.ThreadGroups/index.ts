@@ -108,6 +108,17 @@ export default class LynxThreadGroupPlugin implements PerfettoPlugin {
     if (threadName.startsWith('Lynx') || threadName.startsWith('lynx_')) {
       return ThreadSortOrder.LYNX_THREAD;
     }
+    // Memory tracks
+    if (threadName.startsWith('memory_')) {
+      return ThreadSortOrder.PAGE_MEMORY_TRACK;
+    }
+    if (threadName.startsWith('summary.')) {
+      if (threadName === 'summary.total-pss') {
+        return ThreadSortOrder.MEMORY_TOTAL_PSS_TRACK;
+      } else {
+        return ThreadSortOrder.SUMMARY_MEMORY_TRACK;
+      }
+    }
     // Default to other threads
     return ThreadSortOrder.OTHER_THREAD;
   }

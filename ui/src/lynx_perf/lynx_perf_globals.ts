@@ -17,12 +17,14 @@
 // LICENSE file in the root directory of this source tree.
 
 import {createStore} from '../base/store';
+import {Selection, TrackEventSelection} from '../public/selection';
 import {createEmptyLynxState} from './empty_state';
 import {
   FrameSlice,
   IssueSummary,
   LynxState,
   LynxViewInstance,
+  MemoryTrackFocusFilter,
   RightSidebarTab,
   SliceThreadState,
   VitalTimestampLine,
@@ -104,6 +106,62 @@ class LynxPerfGlobals {
     this._store.edit((draft) => {
       draft.filteredTraceSet = set;
     });
+  }
+
+  updateFocusedMemoryTrackInstanceIds(instanceIds: Set<number>) {
+    this._store.edit((draft) => {
+      draft.focusedMemoryTrackInstanceIds = instanceIds;
+    });
+  }
+
+  get memoryTrackFocusFilter(): MemoryTrackFocusFilter {
+    return this._store.state.memoryTrackFocusFilter;
+  }
+
+  updateMemoryTrackFocusFilter(filter: Partial<MemoryTrackFocusFilter>) {
+    this._store.edit((draft) => {
+      draft.memoryTrackFocusFilter = {
+        ...draft.memoryTrackFocusFilter,
+        ...filter,
+      };
+    });
+  }
+
+  isMemoryTrackFocusActive() {
+    const filter = this._store.state.memoryTrackFocusFilter;
+    return filter.btsEngine.trim() !== '' || filter.url.trim() !== '';
+  }
+
+  shouldHighlightMemoryTrack(instanceId: number) {
+    return this._store.state.focusedMemoryTrackInstanceIds.has(instanceId);
+  }
+
+  updateCounterTrackBackgroundHighlight(
+    selection: TrackEventSelection,
+    trackIds: Iterable<number>,
+  ) {
+    this._store.edit((draft) => {
+      draft.counterTrackBackgroundHighlight = {
+        sourceTrackUri: selection.trackUri,
+        sourceEventId: selection.eventId,
+        trackIds: new Set(trackIds),
+      };
+    });
+  }
+
+  shouldHighlightCounterTrackBackground(
+    trackId: number,
+    selection: Selection,
+  ): boolean {
+    if (selection.kind !== 'track_event') {
+      return false;
+    }
+    const highlight = this._store.state.counterTrackBackgroundHighlight;
+    return (
+      highlight.sourceTrackUri === selection.trackUri &&
+      highlight.sourceEventId === selection.eventId &&
+      highlight.trackIds.has(trackId)
+    );
   }
 
   updateLynxViewInstances(instances: LynxViewInstance[]) {

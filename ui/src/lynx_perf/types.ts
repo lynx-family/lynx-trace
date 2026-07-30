@@ -16,6 +16,18 @@
 // Licensed under the Apache License Version 2.0 that can be found in the
 // LICENSE file in the root directory of this source tree.
 
+export interface MemoryTrackFocusFilter {
+  focusAlive: boolean;
+  btsEngine: string;
+  url: string;
+}
+
+export interface CounterTrackBackgroundHighlight {
+  sourceTrackUri: string;
+  sourceEventId: number;
+  trackIds: Set<number>;
+}
+
 export interface LynxState {
   issues: IssueSummary[];
   vitalTimestampLine: VitalTimestampLine[];
@@ -33,6 +45,9 @@ export interface LynxState {
   lynxviewInstances: LynxViewInstance[];
   selectedLynxviewInstances: LynxViewInstance[];
   filteredTraceSet: Set<number>;
+  focusedMemoryTrackInstanceIds: Set<number>;
+  memoryTrackFocusFilter: MemoryTrackFocusFilter;
+  counterTrackBackgroundHighlight: CounterTrackBackgroundHighlight;
 
   showRightSidebar: boolean;
   rightSidebarTab: RightSidebarTab;

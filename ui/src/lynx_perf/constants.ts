@@ -21,6 +21,7 @@ import {HSLColor} from '../base/color';
 export const LYNX_ISSUES_PLUGIN_ID = 'lynx.Perf';
 export const LYNX_PERF_ELEMENT_PLUGIN_ID = 'lynx.Element';
 export const LYNX_ISSUE_TYPE_DOM = 'dom';
+export const LYNX_MEMORY_PLUGIN_ID = 'lynx.Memory';
 export const LYNX_VITAL_TIMESTAMP_PLUGIN_ID = 'lynx.VitalTimestamp';
 export const LYNX_NATIVE_MODULE_ID = 'lynx.NativeModule';
 

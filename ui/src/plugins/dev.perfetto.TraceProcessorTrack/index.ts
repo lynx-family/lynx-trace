@@ -64,6 +64,9 @@ import {
 } from '../../trace_processor/sql_utils';
 import {ThreadSliceDetailsPanel} from '../../components/details/thread_slice_details_tab';
 import {CallstackDetailsSection} from './callstack_details_section';
+import {formatBtsVmInstanceName} from '../../lynx_perf/common_components/memory/bts_vm_generations';
+import {loadBtsVmMemoryTrackAssignments} from '../../lynx_perf/common_components/memory/bts_vm_memory_tracks';
+import {lynxPerfGlobals} from '../../lynx_perf/lynx_perf_globals';
 
 const TRACE_PROCESSOR_TRACK_PLUGIN_STATE_SCHEMA = z.object({
   areaSelectionFlamegraphState: FLAMEGRAPH_STATE_SCHEMA.optional(),
@@ -116,6 +119,14 @@ export default class TraceProcessorTrackPlugin implements PerfettoPlugin {
   }
 
   private async addCounters(ctx: Trace) {
+    const btsVmDisplayNameByTrackId = new Map(
+      (await loadBtsVmMemoryTrackAssignments(ctx.engine, true)).map(
+        ({vm, track}) => [
+          track.id,
+          formatBtsVmInstanceName(vm.name, vm.generation),
+        ],
+      ),
+    );
     const result = await ctx.engine.query(`
       include perfetto module viz.threads;
 
@@ -203,6 +214,11 @@ export default class TraceProcessorTrackPlugin implements PerfettoPlugin {
         machine,
       });
       const uri = `/counter_${trackId}`;
+      const btsVmDisplayName = btsVmDisplayNameByTrackId.get(trackId);
+      const displayName =
+        btsVmDisplayName === undefined
+          ? trackName
+          : `bts_vm: ${btsVmDisplayName}`;
 
       const maybeDescriptionRenderer = schema.description?.({
         name: trackName ?? undefined,
@@ -212,6 +228,11 @@ export default class TraceProcessorTrackPlugin implements PerfettoPlugin {
       ctx.tracks.registerTrack({
         uri,
         description: maybeDescriptionRenderer ?? description ?? undefined,
+        shouldHighlightBackground: () =>
+          lynxPerfGlobals.shouldHighlightCounterTrackBackground(
+            trackId,
+            ctx.selection.selection,
+          ),
         tags: {
           kinds: [COUNTER_TRACK_KIND],
           trackIds: [trackId],
@@ -238,7 +259,7 @@ export default class TraceProcessorTrackPlugin implements PerfettoPlugin {
         utid,
         new TrackNode({
           uri,
-          name: trackName,
+          name: displayName,
           sortOrder: utid !== undefined || upid !== undefined ? 30 : 0,
           chips: removeFalsyValues([
             isKernelThread === 0 && isMainThread === 1 && 'main thread',

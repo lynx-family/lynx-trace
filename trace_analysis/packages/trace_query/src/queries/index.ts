@@ -12,6 +12,8 @@ export * from './query_descendants';
 export * from './query_flow_events';
 export * from './query_long_tasks';
 export * from './query_lynxviews';
+export * from './query_memory_analysis';
+export * from './query_memory_snapshot';
 export * from './query_metrics';
 export * from './query_pipeline_ids';
 export * from './query_pipeline_overview_events';

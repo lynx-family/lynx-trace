@@ -2,6 +2,9 @@
 // Licensed under the Apache License Version 2.0 that can be found in the
 // LICENSE file in the root directory of this source tree.
 
+import * as os from 'os';
+import * as path from 'path';
+
 import { Command } from 'commander';
 
 import { queryAggregate } from '../queries/query_aggregate';
@@ -14,11 +17,14 @@ import { queryDescendants } from '../queries/query_descendants';
 import { queryFlowEvents } from '../queries/query_flow_events';
 import { queryLongTasks } from '../queries/query_long_tasks';
 import { queryLynxView } from '../queries/query_lynxviews';
+import { queryMemoryAnalysis } from '../queries/query_memory_analysis';
+import { extractMemorySnapshot } from '../queries/query_memory_snapshot';
 import { queryMetrics } from '../queries/query_metrics';
 import { queryPipelineIds } from '../queries/query_pipeline_ids';
 import { queryPipelineOverviewEvents } from '../queries/query_pipeline_overview_events';
 import { queryThreads } from '../queries/query_threads';
 import { queryTraceMetadata } from '../queries/query_trace_metadata';
+import { generateMemoryAnalysisReport } from '../reports/memory_analysis_report';
 import { CommandHooks } from '../types/hook';
 import { getTreeStyleTraceEvents } from '../utils/convert_trace_event_style';
 import { TraceQuery } from '../utils/trace_query';
@@ -35,6 +41,10 @@ interface CommandOptions {
   query?: string;
   instanceId?: string;
   pipelineId?: string;
+  url?: string;
+  scenario?: string;
+  output?: string;
+  snapshotId?: string;
 }
 
 function tryRequireHooks(): CommandHooks | null {
@@ -149,18 +159,15 @@ async function main() {
     .option('--text <text>', 'Search text')
     .option('-p, --path <path>', 'Trace file path (can be URL or local file)')
     .action(
-      wrapCommandAction(
-        'search',
-        async (options: CommandOptions, traceQuery: TraceQuery) => {
-          requireOption(options.path, 'path');
-          const text = requireOption(options.text, 'text');
+      wrapCommandAction('search', async (options: CommandOptions, traceQuery: TraceQuery) => {
+        requireOption(options.path, 'path');
+        const text = requireOption(options.text, 'text');
 
-          const events = await queryBySearchText(traceQuery, text);
-          const result = getTreeStyleTraceEvents(events);
+        const events = await queryBySearchText(traceQuery, text);
+        const result = getTreeStyleTraceEvents(events);
 
-          console.log('Search result:', JSON.stringify(result, null, 2));
-        },
-      ),
+        console.log('Search result:', JSON.stringify(result, null, 2));
+      }),
     );
 
   program
@@ -377,6 +384,92 @@ async function main() {
         const result = await queryPipelineOverviewEvents(tq, pipelineId);
 
         console.log('Pipeline overview:', JSON.stringify(result, null, 2));
+      }),
+    );
+
+  program
+    .command('memory-analysis')
+    .description('Analyze Lynx memory data and generate a self-contained HTML report')
+    .option('-p, --path <path>', 'Trace file path (can be URL or local file)')
+    .option('--url <url>', 'Only select pages whose URL contains this value')
+    .option('--instance-id <id>', 'Only select this Lynx page instance ID')
+    .option('--scenario <scenario>', 'Analysis scenario: default or scroll', 'default')
+    .option('-s, --start <start>', 'Scroll scenario start timestamp in ms')
+    .option('-e, --end <end>', 'Scroll scenario end timestamp in ms')
+    .option('-o, --output <output>', 'HTML report output path', 'memory-analysis-report.html')
+    .action(
+      wrapCommandAction('memory-analysis', async (options: CommandOptions, tq: TraceQuery) => {
+        requireOption(options.path, 'path');
+        const scenario = options.scenario === 'scroll' ? 'scroll' : 'default';
+        const result = await queryMemoryAnalysis(tq, {
+          url: options.url,
+          instanceId: parseInteger(options.instanceId),
+          scenario,
+          startTsMs: parseNumber(options.start),
+          endTsMs: parseNumber(options.end),
+        });
+        const reportPath = generateMemoryAnalysisReport(
+          result,
+          path.resolve(options.output || 'memory-analysis-report.html'),
+        );
+        console.log(
+          'Memory analysis:',
+          JSON.stringify(
+            {
+              valid: result.valid,
+              error: result.error,
+              reportPath,
+              summary: result.summary,
+              warnings: result.warnings,
+              issues: result.issues,
+              pages: result.pages.map((page) => ({
+                instanceId: page.instanceId,
+                url: page.url,
+                selected: page.selected,
+                classification: page.classification,
+                mtsVmType: page.mtsVmType,
+                btsVmType: page.btsVmType,
+                btsVmName: page.btsVmName,
+                sharedBts: page.sharedBts,
+              })),
+              snapshots: result.snapshots.map((snapshot) => ({
+                vmId: snapshot.vmId,
+                index: snapshot.index,
+                snapshotId: snapshot.snapshotId,
+                willTsMs: snapshot.willTsMs,
+              })),
+              sharedBtsVmAnalyses: result.sharedBtsVmAnalyses.map((analysis) => ({
+                vmId: analysis.vmId,
+                instanceIds: analysis.instanceIds,
+                createdAfterTraceStart: analysis.createdAfterTraceStart,
+                destroyed: analysis.destroyed,
+                endRssBytes: analysis.endRssBytes,
+                notDestroyedIssue: analysis.notDestroyedIssue,
+                gcAccumulateTrend: analysis.gcAccumulateTrend,
+              })),
+              analysableLeakEvents: result.analysableLeakEvents,
+            },
+            null,
+            2,
+          ),
+        );
+      }),
+    );
+
+  program
+    .command('memory-snapshot')
+    .description('Extract a JS heap snapshot embedded in a trace')
+    .option('-p, --path <path>', 'Trace file path (can be URL or local file)')
+    .option('--snapshot-id <id>', 'Snapshot ID returned by memory-analysis')
+    .option('-o, --output <output>', 'Heap snapshot output path')
+    .action(
+      wrapCommandAction('memory-snapshot', async (options: CommandOptions, tq: TraceQuery) => {
+        requireOption(options.path, 'path');
+        const snapshotId = requireOption(options.snapshotId, 'snapshot-id');
+        const safeName = snapshotId.replace(/[^a-zA-Z0-9._-]+/g, '_');
+        const output = options.output || path.join(os.tmpdir(), 'lynx-memory-snapshots', `${safeName}.heapsnapshot`);
+        const result = await extractMemorySnapshot(tq, snapshotId, output);
+        console.log('Memory snapshot:', JSON.stringify(result, null, 2));
       }),
     );
 

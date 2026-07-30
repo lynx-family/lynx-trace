@@ -103,6 +103,7 @@ export const defaultPlugins = [
   'lynx.Description',
   'lynx.Perf',
   'lynx.Element',
+  'lynx.Memory',
   'lynx.VitalTimestamp',
   'lynx.NativeModule',
   'lynx.FrameJank',

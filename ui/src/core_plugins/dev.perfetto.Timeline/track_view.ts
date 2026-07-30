@@ -186,6 +186,7 @@ export class TrackView {
         collapsible: collapsible && node.hasChildren,
         collapsed: collapsible && node.collapsed,
         highlight: this.isHighlighted(),
+        backgroundHighlight: this.isBackgroundHighlighted(),
         summary: node.isSummary,
         reorderable,
         depth: attrs.depth,
@@ -441,6 +442,10 @@ export class TrackView {
     }
 
     return false;
+  }
+
+  private isBackgroundHighlighted(): boolean {
+    return this.descriptor?.shouldHighlightBackground?.() ?? false;
   }
 
   private renderAreaSelectionCheckbox(): m.Children {

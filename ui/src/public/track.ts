@@ -151,6 +151,10 @@ export interface Track {
   // Used mainly for legacy purposes that predate dataset.
   readonly tags?: TrackTags;
 
+  // Optional dynamic predicate for highlighting the whole track background.
+  // This is independent from highlights drawn by the track renderer itself.
+  readonly shouldHighlightBackground?: () => boolean;
+
   // Filled in by the core.
   readonly pluginId?: string;
 }

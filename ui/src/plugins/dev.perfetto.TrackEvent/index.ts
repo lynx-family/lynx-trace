@@ -49,6 +49,9 @@ import {
   SLICE_TRACK_SUMMARY_KIND,
   GroupSummaryTrack,
 } from '../dev.perfetto.ProcessSummary/group_summary_track';
+import {formatBtsVmInstanceName} from '../../lynx_perf/common_components/memory/bts_vm_generations';
+import {loadBtsVmMemoryTrackAssignments} from '../../lynx_perf/common_components/memory/bts_vm_memory_tracks';
+import {lynxPerfGlobals} from '../../lynx_perf/lynx_perf_globals';
 
 function createTrackEventDetailsPanel(trace: Trace) {
   return () =>
@@ -85,6 +88,14 @@ export default class TrackEventPlugin implements PerfettoPlugin {
       this.migrateTrackEventPluginState(init),
     );
 
+    const btsVmDisplayNameByTrackId = new Map(
+      (await loadBtsVmMemoryTrackAssignments(ctx.engine, true)).map(
+        ({vm, track}) => [
+          track.id,
+          formatBtsVmInstanceName(vm.name, vm.generation),
+        ],
+      ),
+    );
     await ctx.engine.query(`include perfetto module viz.summary.track_event;`);
 
     // Step 1: Materialize track metadata
@@ -209,6 +220,14 @@ export default class TrackEventPlugin implements PerfettoPlugin {
         tid,
         pid,
       });
+      const btsVmDisplayName =
+        isCounter && trackIds.length === 1
+          ? btsVmDisplayNameByTrackId.get(trackIds[0])
+          : undefined;
+      const displayName =
+        btsVmDisplayName === undefined
+          ? trackName
+          : `bts_vm: ${btsVmDisplayName}`;
       const uri = `/track_event_${trackIds[0]}`;
       if (hasData && isCounter) {
         // Don't show any builtin counter.
@@ -220,6 +239,11 @@ export default class TrackEventPlugin implements PerfettoPlugin {
         ctx.tracks.registerTrack({
           uri,
           description: description ?? undefined,
+          shouldHighlightBackground: () =>
+            lynxPerfGlobals.shouldHighlightCounterTrackBackground(
+              trackId,
+              ctx.selection.selection,
+            ),
           tags: {
             kinds: [kind],
             trackIds: [trackIds[0]],
@@ -302,7 +326,7 @@ export default class TrackEventPlugin implements PerfettoPlugin {
         hasChildren,
       );
       const node = new TrackNode({
-        name: trackName,
+        name: displayName,
         sortOrder: orderId,
         isSummary: hasData === 0,
         uri,

@@ -30,4 +30,10 @@ export enum ThreadSortOrder {
 
   // Default priority for all other threads
   OTHER_THREAD = 20,
+
+  // Memory counter tracks
+  PAGE_MEMORY_TRACK = 25,
+  MEMORY_TOTAL_PSS_TRACK = 26,
+  SUMMARY_MEMORY_TRACK = 27,
+  MEMORY_VITALS = 28,
 }

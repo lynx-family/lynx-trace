@@ -30,6 +30,8 @@ The tools in this Skill can be invoked via the following CLI commands without ad
 | `metrics` | Query Lynx rendering metrics |
 | `threads` | Query all threads from trace |
 | `long-tasks` | Query long tasks on a specific track |
+| `memory-analysis` | Analyze Lynx memory data and generate an interactive HTML report |
+| `memory-snapshot` | Extract a JS heap snapshot embedded in a trace |
 | `sql` | Execute raw SQL query |
 
 **Before using `sql`, please read the [sql-guide](./references/sql-guide.md) guide first.**
@@ -127,6 +129,18 @@ The tools in this Skill can be invoked via the following CLI commands without ad
 
   ```bash
   $ node <path_to_the_skill>/scripts/trace_query.bundle.cjs sql --query "SELECT * FROM slice LIMIT 10" --path "https://example.com/trace.pftrace"
+  ```
+
+- **Analyze Lynx memory and generate an HTML report:**
+
+  ```bash
+  $ node <path_to_the_skill>/scripts/trace_query.bundle.cjs memory-analysis --path "/path/to/trace.pftrace" --output "/tmp/memory-report.html"
+  ```
+
+- **Extract a JS heap snapshot:**
+
+  ```bash
+  $ node <path_to_the_skill>/scripts/trace_query.bundle.cjs memory-snapshot --path "/path/to/trace.pftrace" --snapshot-id "demo(shared bts)#123456" --output "/tmp/demo.heapsnapshot"
   ```
 
 - **Using local file path:**

@@ -8,6 +8,7 @@ description: |
     - Regression Detection: Comparing traces to identify performance degradation or verify optimization gains between versions.
     - Pipeline Deep Dive: Pinpointing bottlenecks in specific rendering stages like Layout, Paint, JS execution, and background threads.
     - Native Module Analysis: Investigating performance issues related to native module calls.
+    - Memory Analysis: Diagnosing high PSS, page lifecycle leaks, shared BTS context growth, VM pool waste, and JS heap snapshots.
 tools: ['load_skill', 'query_metrics', 'query_by_time_window', 'query_aggregate', 'query_ancestors', 'query_descendants', 'query_flow_events', 'query_by_id', 'query_trace_metadata', 'query_threads', 'query_long_tasks', 'query_by_raw_sql']
 ---
 
@@ -25,6 +26,10 @@ For every user request, you MUST follow this **Think-Plan-Act** loop:
 **Note: Before conducting any in-depth analysis, ensure you have retrieved the corresponding analysis guide documentation and strictly follow the guide for your analysis.**
 
 ## Output Requirements
+For memory requests, the loaded [memory-analysis](./references/memory-analysis.md) guide overrides the
+standard Markdown report structure below. Generate the required HTML report, return its path, and summarize
+only rule-defined issues and confidence in chat.
+
 **Global Formatting Rule (CRITICAL)**
 Whenever you reference a specific trace event in the text (Summary, Overview, Suggestions), you **MUST** retain its identity using the format:
 `[EventName]({id})`
@@ -62,6 +67,7 @@ Provide 2-5 specific, actionable recommendations sorted by priority (High/Medium
 - [nativemodule-analysis](./references/nativemodule-analysis.md): Guide for: Bridge communication, Native method latency, Serialization costs. 
 - [render-pipeline](./references/render-pipeline.md): Guide for: Understanding Lynx rendering pipeline, identifying slow stages, and analyzing gaps between metrics.
 - [event-analysis](./references/event-analysis.md): Guide for: Diagnosing missing touch/custom/global events, tracing event dispatch to the real business handler, and distinguishing event delivery delay from handler cost.
+- [memory-analysis](./references/memory-analysis.md): Guide for: High memory, page load/exit memory changes, memory leaks, shared BTS contexts, scrolling trends, VM pools, and JS heap snapshots.
 - [sql-guide](./references/sql-guide.md): Guide for writing raw SQL queries to query trace data.
 - [sourcemap-remapping](./references/sourcemap-remapping.md): Guide for remapping line and column numbers from Lynx trace event arguments back to original source positions.
 
@@ -79,6 +85,7 @@ Examples: "Why is FMP slow?", "Analyze the jank in this scroll.", "Why is there 
 - [nativemodule-analysis](./references/nativemodule-analysis.md) for NativeModule latency, bridge communication issues.
 - [event-analysis](./references/event-analysis.md) for event not firing, tap/click/touch not responding, custom event dispatch issues, GlobalEventEmitter issues, or slow event response.
 - [timing-flag](./references/timing-flag.md) for diagnosing missing timing/performance callbacks, invalid timing flags, and abnormal ActualFMP durations.
+- [memory-analysis](./references/memory-analysis.md) for high memory, memory growth/leaks, page memory release, shared-context BTS memory, VM pool memory, scrolling memory trends, or heap snapshots.
 
 ### Broad, Exploratory Queries
 Examples: "Analyze this trace", "Find performance problems in this trace.", "What's wrong with this page?"

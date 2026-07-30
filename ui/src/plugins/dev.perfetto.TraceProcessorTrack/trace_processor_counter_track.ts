@@ -20,6 +20,11 @@ import {
 import {TrackEventDetails} from '../../public/selection';
 import {TrackMouseEvent} from '../../public/track';
 import {LONG, LONG_NULL, NUM} from '../../trace_processor/query_result';
+import {lynxPerfGlobals} from '../../lynx_perf/lynx_perf_globals';
+import {
+  formatMemoryCounterValue,
+  isMemoryCounterTrackName,
+} from '../../lynx_perf/common_components/memory/memory_format';
 import {CounterDetailsPanel} from './counter_details_panel';
 
 export interface TraceProcessorCounterTrackAttrs
@@ -54,7 +59,18 @@ export class TraceProcessorCounterTrack extends CounterTrack {
       from ${rootTable}
       where track_id = ${trackId}
     `;
-    super({...attrs, sqlSource: resolvedSqlSource});
+    const memoryInstanceId = parseMemoryInstanceId(trackName);
+    super({
+      ...attrs,
+      sqlSource: resolvedSqlSource,
+      shouldHighlightData:
+        memoryInstanceId === undefined
+          ? undefined
+          : () => lynxPerfGlobals.shouldHighlightMemoryTrack(memoryInstanceId),
+      tooltipValueFormatter: isMemoryCounterTrackName(trackName)
+        ? formatMemoryCounterValue
+        : attrs.tooltipValueFormatter,
+    });
     this.trackId = trackId;
     this.trackName = trackName;
     this.rootTable = rootTable;
@@ -129,6 +145,7 @@ export class TraceProcessorCounterTrack extends CounterTrack {
   detailsPanel() {
     return new CounterDetailsPanel(
       this.trace,
+      this.trackId,
       this.trackName,
       () => this.yMode,
       this.unit,
@@ -136,4 +153,13 @@ export class TraceProcessorCounterTrack extends CounterTrack {
       this.sqlSource,
     );
   }
+}
+
+function parseMemoryInstanceId(trackName: string): number | undefined {
+  const instanceId = /^memory_(\d+)$/.exec(trackName)?.[1];
+  if (instanceId === undefined) {
+    return undefined;
+  }
+  const value = Number(instanceId);
+  return Number.isFinite(value) ? value : undefined;
 }

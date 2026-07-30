@@ -66,6 +66,14 @@
         border-color: var(--pf-color-track-summary-expanded);
       }
     }
+
+    &--background-highlight {
+      background-color: var(--pf-color-track-background-highlight);
+
+      &::before {
+        background-color: var(--pf-color-track-background-highlight);
+      }
+    }
   }
 
   &__shell--lite {

@@ -34,6 +34,17 @@ export function createEmptyLynxState(): LynxState {
     lynxviewInstances: [],
     selectedLynxviewInstances: [],
     filteredTraceSet: new Set(),
+    focusedMemoryTrackInstanceIds: new Set(),
+    memoryTrackFocusFilter: {
+      focusAlive: true,
+      btsEngine: '',
+      url: '',
+    },
+    counterTrackBackgroundHighlight: {
+      sourceTrackUri: '',
+      sourceEventId: -1,
+      trackIds: new Set(),
+    },
     showRightSidebar: false,
     rightSidebarTab: RightSidebarTab.Unknown,
     rightSidebarWidth: RIGHT_SIDEBAR_MIN_WIDTH,

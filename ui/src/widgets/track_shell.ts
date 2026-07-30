@@ -83,6 +83,9 @@ export interface TrackShellAttrs extends HTMLAttrs {
   // Whether to highlight the track or not.
   readonly highlight?: boolean;
 
+  // Whether to highlight the whole track background, including its data area.
+  readonly backgroundHighlight?: boolean;
+
   // Whether the shell should be draggable and emit drag/drop events.
   readonly reorderable?: boolean;
 
@@ -136,6 +139,7 @@ export class TrackShell implements m.ClassComponent<TrackShellAttrs> {
       depth = 0,
       stickyTop = 0,
       lite,
+      backgroundHighlight,
     } = attrs;
 
     const expanded = collapsible && !collapsed;
@@ -159,6 +163,7 @@ export class TrackShell implements m.ClassComponent<TrackShellAttrs> {
             summary && 'pf-track__header--summary',
             expanded && 'pf-track__header--expanded',
             summary && expanded && 'pf-track__header--expanded--summary',
+            backgroundHighlight && 'pf-track__header--background-highlight',
           ),
         },
         this.renderShell(attrs),

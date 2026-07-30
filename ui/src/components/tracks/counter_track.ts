@@ -264,6 +264,12 @@ export interface CounterTrackAttrs {
 
   /** Optional lifecycle callback, called once before the first render. */
   onInit?(): Promise<void>;
+
+  /** Optional callback for drawing an extra highlight over the counter data. */
+  shouldHighlightData?(): boolean;
+
+  /** Optional formatter for the value shown in the hover tooltip. */
+  tooltipValueFormatter?(value: number, unit: string): string;
 }
 
 export class CounterTrack implements TrackRenderer {
@@ -295,6 +301,11 @@ export class CounterTrack implements TrackRenderer {
   private readonly yOverrideMaximum?: number;
   private readonly yOverrideMinimum?: number;
   private readonly yRangeSharingKey?: string;
+  private readonly shouldHighlightDataFn?: () => boolean;
+  private readonly tooltipValueFormatterFn?: (
+    value: number,
+    unit: string,
+  ) => string;
 
   // Reference to latest rendered data for hover computation.
   // Always set from QuerySlot results — never cleared manually.
@@ -319,6 +330,8 @@ export class CounterTrack implements TrackRenderer {
       yOverrideMinimum,
       yRangeSharingKey,
       onInit,
+      shouldHighlightData,
+      tooltipValueFormatter,
     } = attrs;
     this.trace = trace;
     this.uri = uri;
@@ -333,8 +346,14 @@ export class CounterTrack implements TrackRenderer {
     this.yOverrideMaximum = yOverrideMaximum;
     this.yOverrideMinimum = yOverrideMinimum;
     this.yRangeSharingKey = yRangeSharingKey;
+    this.shouldHighlightDataFn = shouldHighlightData;
+    this.tooltipValueFormatterFn = tooltipValueFormatter;
     this.rangeSharer = RangeSharer.getRangeSharer(trace);
     this.onInitFn = onInit;
+  }
+
+  private shouldHighlightData(): boolean {
+    return this.shouldHighlightDataFn?.() ?? false;
   }
 
   // -- Static factory methods --
@@ -511,6 +530,27 @@ export class CounterTrack implements TrackRenderer {
         0,
         trackHeight,
       );
+
+      if (this.shouldHighlightData()) {
+        const highlightFillAlpha = new Float32Array(timestampsRel.length).fill(
+          0.9,
+        );
+        renderer.drawStepArea(
+          {
+            xs: timestampsRel,
+            ys: lastDisplayValues,
+            minYs: minDisplayValues,
+            maxYs: maxDisplayValues,
+            xnext: timestampsRelNext,
+            fillAlpha: highlightFillAlpha,
+            count,
+          },
+          transform,
+          new HSLColor([42, 96, 78], 0.88),
+          0,
+          trackHeight,
+        );
+      }
     }
 
     const hover = this.hover;
@@ -594,6 +634,30 @@ export class CounterTrack implements TrackRenderer {
       timescale.timeToPx(loadedBounds.start),
       timescale.timeToPx(loadedBounds.end),
     );
+
+    if (count >= 1 && this.shouldHighlightData()) {
+      ctx.save();
+      ctx.strokeStyle = 'rgba(217, 119, 6, 0.98)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      for (let i = 0; i < count; i++) {
+        const xStart = calculateX(timestampsRel[i]);
+        const xEnd = calculateX(timestampsRelNext[i]);
+        const y = Math.round(
+          padTop +
+            drawHeight -
+            ((lastDisplayValues[i] - yMin) / yRange) * drawHeight,
+        );
+        if (i === 0) {
+          ctx.moveTo(xStart, y);
+        } else {
+          ctx.lineTo(xStart, y);
+        }
+        ctx.lineTo(xEnd, y);
+      }
+      ctx.stroke();
+      ctx.restore();
+    }
   }
 
   onMouseMove({x, y, timescale}: TrackMouseEvent) {
@@ -615,7 +679,8 @@ export class CounterTrack implements TrackRenderer {
     if (!this.hover) return undefined;
     const text = this.formatYValue(
       this.hover.lastDisplayValue,
-      (v, unit) => `${v.toLocaleString()}${unit}`,
+      this.tooltipValueFormatterFn ??
+        ((v, unit) => `${v.toLocaleString()}${unit}`),
     );
     return m('.pf-track__tooltip', text);
   }

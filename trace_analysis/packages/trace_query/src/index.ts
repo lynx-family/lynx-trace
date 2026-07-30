@@ -3,6 +3,8 @@
 // LICENSE file in the root directory of this source tree.
 
 export * from './queries';
+export * from './reports';
 export * from './utils/trace_query';
 export * from './utils/convert_trace_event_style';
 export * from './types/trace_event';
+export * from './types/memory_analysis';
