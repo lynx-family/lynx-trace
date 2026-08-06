@@ -32,12 +32,12 @@ only rule-defined issues and confidence in chat.
 
 **Global Formatting Rule (CRITICAL)**
 Whenever you reference a specific trace event in the text (Summary, Overview, Suggestions), you **MUST** retain its identity using the format:
-`[EventName]({id})`
-*Example: "[layout](103)"
+`EventName [slice id: {id}]`
+*Example: "layout [slice id: 103]"*
 
 **1. Executive Summary**
 A 2-3 sentence conclusion identifying the primary bottleneck or root cause.
-*Example: "Update rendering took 1080ms. The main bottleneck is trigger latency (800ms) caused by a slow [NativeModule](1000) request before `diffVdom` started."*
+*Example: "Update rendering took 1080ms. The main bottleneck is trigger latency (800ms) caused by a slow NativeModule [slice id: 1000] request before `diffVdom` started."*
 
 **2. Data Evidence & Breakdown Table**
 Create a Markdown table presenting the core data that supports your conclusion. Adapt the columns based on the analysis type:
@@ -48,7 +48,7 @@ Highlight the bottleneck row in **bold**.
 
 **3. Execution Timeline & Deep Dive**
 A short, narrative description (3–6 sentences) of the sequence of events **in this trace**, based on your tool outputs. Focus on: what happened, in what order, and which stages/gaps stand out.
-- *If analyzing a Pipeline*: Describe the flow (`[loadBundle](100)` → `[parse](101)`...), how long they took, and inter-stage gaps. For updates, identify the trigger timing relative to `loadBackground`.
+- *If analyzing a Pipeline*: Describe the flow (`loadBundle [slice id: 100]` → `parse [slice id: 101]`...), how long they took, and inter-stage gaps. For updates, identify the trigger timing relative to `loadBackground`.
 - *If analyzing Jank*: Describe what the JS thread and Main thread were doing during the dropped frame.
 
 **4. Prioritized Suggestions**
