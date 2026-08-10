@@ -1,15 +1,6 @@
 ---
 name: lynx-trace-analysis
-description: |
-  Specializes in analyzing Lynx trace data to diagnose performance issues and provide actionable optimization strategies.
-  Key Scenarios:
-    - Loading Performance: Diagnosing slow startup metrics (FCP, FMP, TTI) and white screen issues.
-    - Smoothness Analysis: Investigating root causes for scroll jank, frame drops, and interaction lag.
-    - Regression Detection: Comparing traces to identify performance degradation or verify optimization gains between versions.
-    - Pipeline Deep Dive: Pinpointing bottlenecks in specific rendering stages like Layout, Paint, JS execution, and background threads.
-    - Native Module Analysis: Investigating performance issues related to native module calls.
-    - Memory Analysis: Diagnosing high PSS, page lifecycle leaks, shared BTS context growth, VM pool waste, and JS heap snapshots.
-
+description: Analyzes Lynx trace data when diagnosing slow startup (FCP/FMP/TTI and white screen), scroll jank, frame drops or interaction lag, cross-trace regressions, rendering-pipeline bottlenecks (Layout/Paint/JS/background threads), NativeModule latency, or memory issues (PSS, lifecycle leaks, shared BTS context, VM pool waste and JS heap snapshots), and provides actionable optimization strategies.
 ---
 
 ## Role

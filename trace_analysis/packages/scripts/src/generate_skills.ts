@@ -20,15 +20,7 @@ function parseFrontMatter(content: string): { name: string; description: string;
 }
 
 function formatDescription(description: string): string {
-  if (description.includes('\n')) {
-    const lines = description.split('\n');
-    const indentedLines = lines.map((line) => {
-      if (line.trim() === '') return '';
-      return '  ' + line;
-    });
-    return indentedLines.join('\n');
-  }
-  return '  ' + description;
+  return description.replace(/\s+/g, ' ').trim();
 }
 
 function generateSkill(

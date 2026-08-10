@@ -1,7 +1,6 @@
 ---
 name: {{SKILL_NAME}}
-description: |
-{{SKILL_DESCRIPTION}}
+description: {{SKILL_DESCRIPTION}}
 ---
 
 {{SKILL_INSTRUCTION}}
