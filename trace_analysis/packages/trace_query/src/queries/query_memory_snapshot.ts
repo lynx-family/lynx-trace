@@ -2,6 +2,7 @@
 // Licensed under the Apache License Version 2.0 that can be found in the
 // LICENSE file in the root directory of this source tree.
 
+import { createHash } from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -12,6 +13,7 @@ export interface ExtractedMemorySnapshot {
   outputPath: string;
   chunkCount: number;
   totalLength: number;
+  sha256: string;
 }
 
 function escapeSqlLiteral(value: string): string {
@@ -31,6 +33,8 @@ export async function extractMemorySnapshot(
   const escapedSnapshotId = escapeSqlLiteral(snapshotId);
   const metadataRows = await traceQuery.query(`
     SELECT
+      COUNT(DISTINCT s.id) capture_count,
+      MAX(CASE WHEN a.flat_key = 'debug.id' THEN a.display_value END) scope_id,
       MAX(CASE WHEN a.flat_key = 'debug.total_length' THEN a.display_value END) total_length,
       MAX(CASE WHEN a.flat_key = 'debug.chunk_count' THEN a.display_value END) chunk_count
     FROM slice s
@@ -45,6 +49,10 @@ export async function extractMemorySnapshot(
       )
   `);
   const metadata = metadataRows[0];
+  if (toNumber(metadata?.['capture_count']) !== 1) {
+    throw new Error(`Snapshot ID must identify exactly one capture: ${snapshotId}`);
+  }
+  if (!metadata?.['scope_id']) throw new Error(`Snapshot capture has no scope ID: ${snapshotId}`);
   const declaredLength = toNumber(metadata?.['total_length']);
   const declaredChunkCount = toNumber(metadata?.['chunk_count']);
   if (declaredChunkCount === 0) {
@@ -53,9 +61,10 @@ export async function extractMemorySnapshot(
 
   const chunkRows = await traceQuery.query(`
     SELECT
-      CAST(chunk_index.string_value AS INT) chunk_index,
-      CAST(COALESCE(chunk_offset.string_value, '0') AS INT) chunk_offset,
+      CAST(COALESCE(chunk_index.int_value, chunk_index.string_value) AS INT) chunk_index,
+      CAST(COALESCE(chunk_offset.int_value, chunk_offset.string_value) AS INT) chunk_offset,
       content.string_value content
+      , scope.display_value scope_id
     FROM slice s
     JOIN args snapshot_arg
       ON snapshot_arg.arg_set_id = s.arg_set_id
@@ -69,9 +78,11 @@ export async function extractMemorySnapshot(
     JOIN args content
       ON content.arg_set_id = s.arg_set_id
       AND content.flat_key = 'debug.content'
+    LEFT JOIN args scope
+      ON scope.arg_set_id = s.arg_set_id AND scope.flat_key = 'debug.id'
     WHERE s.name = 'snapshot_chunk'
       AND snapshot_arg.string_value = '${escapedSnapshotId}'
-    ORDER BY CAST(chunk_index.string_value AS INT), CAST(COALESCE(chunk_offset.string_value, '0') AS INT)
+    ORDER BY chunk_index, chunk_offset
   `);
   if (chunkRows.length !== declaredChunkCount) {
     throw new Error(
@@ -79,9 +90,36 @@ export async function extractMemorySnapshot(
     );
   }
 
-  const content = chunkRows.map((row) => String(row['content'] ?? '')).join('');
-  if (content.length !== declaredLength) {
-    throw new Error(`Snapshot length mismatch for ${snapshotId}: expected ${declaredLength}, got ${content.length}`);
+  let byteOffset = 0;
+  const content = chunkRows
+    .map((row, index) => {
+      if (row['scope_id'] !== metadata?.['scope_id']) throw new Error(`Snapshot chunk scope mismatch: ${snapshotId}`);
+      if (
+        row['chunk_index'] === null ||
+        row['chunk_index'] === undefined ||
+        toNumber(row['chunk_index']) !== index ||
+        (row['chunk_offset'] !== null &&
+          row['chunk_offset'] !== undefined &&
+          toNumber(row['chunk_offset']) !== byteOffset)
+      ) {
+        throw new Error(`Snapshot chunk index or byte offset mismatch for ${snapshotId}, chunk ${index}`);
+      }
+      const chunk = String(row['content'] ?? '');
+      byteOffset += Buffer.byteLength(chunk, 'utf8');
+      return chunk;
+    })
+    .join('');
+  if (byteOffset !== declaredLength) {
+    throw new Error(`Snapshot length mismatch for ${snapshotId}: expected ${declaredLength}, got ${byteOffset}`);
+  }
+  const parsed = JSON.parse(content);
+  if (
+    !parsed.snapshot?.meta ||
+    !Array.isArray(parsed.nodes) ||
+    !Array.isArray(parsed.edges) ||
+    !Array.isArray(parsed.strings)
+  ) {
+    throw new Error(`Invalid heap snapshot structure: ${snapshotId}`);
   }
 
   const resolvedOutputPath = path.resolve(outputPath);
@@ -91,6 +129,7 @@ export async function extractMemorySnapshot(
     snapshotId,
     outputPath: resolvedOutputPath,
     chunkCount: chunkRows.length,
-    totalLength: content.length,
+    totalLength: byteOffset,
+    sha256: createHash('sha256').update(content).digest('hex'),
   };
 }

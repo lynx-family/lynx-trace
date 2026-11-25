@@ -176,6 +176,7 @@ export class TrackView {
       {
         id: node.id,
         title: node.name,
+        titleTooltip: renderer?.track.getTrackShellTooltip?.(),
         subtitle: node.subtitle,
         ref: node.fullPath.join('/'),
         heightPx: height,
@@ -196,6 +197,10 @@ export class TrackView {
         onCollapsedChanged: () => {
           node.hasChildren && node.toggleCollapsed();
         },
+        onTrackShellClick:
+          renderer?.track.onTrackShellClick === undefined
+            ? undefined
+            : () => renderer.track.onTrackShellClick?.(),
         onTrackContentMouseMove: (pos, bounds) => {
           const timescale = this.getTimescaleForBounds(bounds);
           renderer?.track.onMouseMove?.({
@@ -220,6 +225,11 @@ export class TrackView {
             }) ?? false
           );
         },
+        onTrackContentDoubleClick: (pos, bounds) =>
+          renderer?.track.onMouseDoubleClick?.({
+            ...pos,
+            timescale: this.getTimescaleForBounds(bounds),
+          }) ?? false,
         onMoveBefore: (nodeId: string) => {
           // We are the reference node (the one to be moved relative to), nodeId
           // references the target node (the one to be moved)
@@ -433,10 +443,18 @@ export class TrackView {
       }
     }
 
-    const curSelection = trace.selection;
+    const selection = trace.selection.selection;
+    if (selection.kind === 'track' && selection.trackUri === node.uri) {
+      return true;
+    }
+
+    const counterTrackName = this.descriptor?.tags?.counterTrackName;
     if (
-      curSelection.selection.kind === 'track' &&
-      curSelection.selection.trackUri === node.uri
+      selection.kind === 'area' &&
+      selection.trackUris.length === 1 &&
+      selection.trackUris[0] === node.uri &&
+      typeof counterTrackName === 'string' &&
+      counterTrackName.startsWith('bts_vm_acc_')
     ) {
       return true;
     }

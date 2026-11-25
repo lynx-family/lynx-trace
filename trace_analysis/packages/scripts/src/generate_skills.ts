@@ -131,6 +131,15 @@ function main() {
     true,
     true,
   );
+  fs.cpSync(
+    path.resolve(__dirname, '../../trace_query/dist/report-assets'),
+    path.join(SKILLS_ROOT_DIR, 'trace-analysis-skill/scripts/report-assets'),
+    { recursive: true },
+  );
+  fs.copyFileSync(
+    path.resolve(__dirname, '../../trace_query/scripts/capture_lynx_piper.cjs'),
+    path.join(SKILLS_ROOT_DIR, 'trace-analysis-skill/scripts/capture_lynx_piper.cjs'),
+  );
 
   console.log('\nAll skills generated successfully!');
 }

@@ -249,6 +249,7 @@ module.exports = [
   defBundle('tsc', 'frontend', 'dist_version', true),
   defBundle('tsc', 'engine', 'dist_version'),
   defBundle('tsc', 'traceconv', 'dist_version'),
+  defBundle('tsc/plugins/lynx.memory', 'snapshot_worker', 'dist_version'),
   defBundle('tsc', 'chrome_extension', 'chrome_extension'),
   defServiceWorkerBundle(),
 ]

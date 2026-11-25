@@ -30,6 +30,10 @@ The tools in this Skill can be invoked via the following CLI commands without ad
 | `threads` | Query all threads from trace |
 | `long-tasks` | Query long tasks on a specific track |
 | `memory-analysis` | Analyze Lynx memory data and generate an interactive HTML report |
+| `lynx-source-version` | Preflight an explicit Lynx revision or recorded engine versions |
+| `frontend-prepare` | Validate frontend or public runtime JS/map artifacts |
+| `frontend-confirm` | Optional legacy approval record; not required for analysis |
+| `memory-report` | Import finalized residual findings and source locations |
 | `memory-snapshot` | Extract a JS heap snapshot embedded in a trace |
 | `sql` | Execute raw SQL query |
 

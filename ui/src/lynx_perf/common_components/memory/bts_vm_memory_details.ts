@@ -4,10 +4,12 @@
 // LICENSE file in the root directory of this source tree.
 
 import {Args, ArgsDict} from '../../../components/sql_utils/args';
+import {extractBtsVmSlotBytes} from './bts_vm_slot_memory';
 
 export interface BtsVmMemorySample {
   accumulateBytes: number;
   rssBytes: number;
+  slotBytes: Readonly<Record<number, number>>;
   annotations?: Args;
 }
 
@@ -21,6 +23,7 @@ export function buildBtsVmMemorySample(
   return {
     accumulateBytes: finiteOrZero(counterValue),
     rssBytes: finiteOrZero(baseUsageBytes) + finiteOrZero(pageRssUsageBytes),
+    slotBytes: extractBtsVmSlotBytes(args, annotations),
     annotations:
       annotations ??
       args?.['debug.annotations'] ??

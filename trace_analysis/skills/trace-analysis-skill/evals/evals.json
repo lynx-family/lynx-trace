@@ -5,12 +5,15 @@
       "id": 1,
       "name": "memory-analysis-html-report",
       "prompt": "Analyze this Lynx trace for page-memory growth and shared BTS context leaks. Save the required memory analysis HTML report to /tmp/memory-report.html and summarize only rule-defined findings with confidence.",
-      "expected_output": "An HTML report path and an evidence-bound summary of memory findings.",
+      "expected_output": "Automatic Lynx version/remote preparation when resolvable, then a finalized HTML report after both source checkpoints pass.",
       "files": [
         "memory-growth.pftrace"
       ],
       "expectations": [
         "Loads references/memory-analysis.md before drawing conclusions.",
+        "Resolves Trace version and remote automatically; asks for missing source/revision only if resolution fails, without interpreting failure as source opt-out.",
+        "Rejects Trace versions below 4.5.0 even when their tags exist, and treats them as missing tags without silently upgrading.",
+        "Records both source decisions and final snapshot binding review in --source-preparation; unresolved failures block final delivery.",
         "Uses the memory-analysis trace query workflow rather than generic optimization advice.",
         "Returns the requested HTML report path and labels uncertainty when evidence is incomplete."
       ]
@@ -42,6 +45,395 @@
         "For Android, correlates loadBundle, Timing::Mark.paintEnd, and LynxView.onAttachedToWindow by the same instance_id, and distinguishes Window attachment from Lynx internal render-tree insertion.",
         "Recommends earlier host-side placement of LynxView in the Android View hierarchy, treating ViewGroup.addView only as an example rather than the sole integration mechanism.",
         "For iOS, derives the numeric loadBundle-end and first-paint timestamps, queries their interval, and names a blocker only when flow/dependency or UI/main-thread blocking evidence supports it."
+      ]
+    },
+    {
+      "id": 4,
+      "name": "local-tools-do-not-replace-runtime-preparation",
+      "prompt": "继续本次分析：使用本地 Trace 分析能力 /Users/bytedance/Desktop/Dev/Lynx/lynx-perfetto-internal/external_repo/trace_analysis/skills 和 packages，以及 /Users/bytedance/Desktop/Dev/Lynx/vmsdkcli/ai/skills/js-memory-analyzer。分析 docs/proto/leak-exmaple-gc.pftrace，业务工程为 docs/proto/leak-example，报告输出到桌面。除这两个输入外不要访问 docs。前一轮已确认业务 JS/map 全部产物，版本预检读到 Lynx 4.5.1；本次对话尚未指定 Lynx 运行时源码或回答是否构建公共脚本。",
+      "expected_output": "Automatic remote resolution of A_4.5.1 and public-script preparation; a targeted source/revision question only if resolution fails.",
+      "files": [],
+      "expectations": [
+        "Treats local Trace skills/packages and js-memory-analyzer paths as tools, and leak-example as business source, not a Lynx runtime checkout.",
+        "Prepares lynx_core.js prod/dev and krypton.js despite the completed frontend preparation; does not ask for redundant build consent.",
+        "Reads runtime instructions from the selected Skill references and probes internal first; uses OSS only if internal is inaccessible.",
+        "Blocks memory queries, snapshot analysis and report delivery until runtime preparation or an explicit user opt-out is recorded.",
+        "Does not access other docs files to follow the source-preparation workflow."
+      ]
+    },
+    {
+      "id": 5,
+      "name": "invalid-sample-version-needs-real-revision",
+      "prompt": "继续分析 leak-exmaple-gc.pftrace 的内存问题。业务产物已确认，Lynx 版本预检结果是无效的本地构建标记 local-build；本次对话没有指定任何 Lynx 运行时源码或构建决定。Skill 中的历史样例提到了 commit 710b41823ed73572117b7b6852ed5df6995d4646。",
+      "expected_output": "An evidence-backed unresolved version/ref explanation and a targeted request for actual source/revision, then a wait.",
+      "files": [],
+      "expectations": [
+        "Requests the missing source/revision after automatic resolution is shown unusable, without a separate build-consent question.",
+        "Does not infer refusal from an invalid version or continue memory analysis.",
+        "Does not use the historical sample commit as authorization or a default, even for the same sample Trace.",
+        "Records runtime pending until usable input or an explicit opt-out/abort is received."
+      ]
+    },
+    {
+      "id": 6,
+      "name": "missing-version-needs-runtime-input",
+      "prompt": "继续内存分析。没有业务源码，版本预检未发现 LynxEngineVersion.version 记录，也没有用户指定的 Lynx 运行时源码或构建决定。",
+      "expected_output": "A request for Lynx source/revision needed to prepare public scripts, followed by a wait.",
+      "files": [],
+      "expectations": [
+        "Explains that version metadata is missing without inventing a revision.",
+        "Requests usable Lynx source/revision; does not mark runtime not-provided or opted-out.",
+        "Does not start memory queries, snapshot extraction/analysis or reports while the decision is pending."
+      ]
+    },
+    {
+      "id": 7,
+      "name": "multiple-versions-require-revision-selection",
+      "prompt": "继续内存分析。业务产物已确认，版本预检同时记录 Lynx 4.5.1 和 4.6.0；用户还没有提供 Lynx 运行时源码或选择是否构建公共脚本。",
+      "expected_output": "Both recorded versions with a request to resolve the intended runtime revision when context cannot disambiguate.",
+      "files": [],
+      "expectations": [
+        "Lists both versions and asks for the intended revision, without first asking whether to build.",
+        "Does not silently select the first version or treat multiple versions as refusal.",
+        "Keeps runtime pending until the revision or explicit opt-out is resolved; does not analyze memory while pending."
+      ]
+    },
+    {
+      "id": 8,
+      "name": "explicit-runtime-opt-out-does-not-prompt-again",
+      "prompt": "继续本次内存分析。我明确不需要 Lynx 公共脚本或产物辅助，只使用 Trace 和已经确认的业务 JS/map。业务产物未发生变化。",
+      "expected_output": "The explicit runtime-source opt-out is recorded, and analysis continues using available evidence without asking the same build question again.",
+      "files": [],
+      "expectations": [
+        "Reuses the explicit refusal for this analysis without another build-consent question.",
+        "Records missing public runtime sources and attribution limits.",
+        "Does not clone/build Lynx or require another frontend confirmation for unchanged, already-confirmed artifacts."
+      ]
+    },
+    {
+      "id": 9,
+      "name": "explicit-runtime-selection-authorizes-preparation",
+      "prompt": "继续本次内存分析，业务产物已经确认。Lynx 运行时源码使用 https://code.byted.org/lynx/template-assembler 的 commit 710b41823ed73572117b7b6852ed5df6995d4646，构建公共脚本辅助分析。Trace 的版本预检结果为 local-build。",
+      "expected_output": "Preparation using the explicitly selected repository and commit, without repeating the build-consent question or replacing the revision with Trace metadata.",
+      "files": [],
+      "expectations": [
+        "Records the explicit runtime selection as authorization and does not re-ask whether to build.",
+        "Preserves the user-selected repository/revision despite unusable Trace metadata.",
+        "Fetches the remote into a new empty workspace and builds in this attempt without inspecting local repositories or reusing worktrees, caches, JS/maps or manifests.",
+        "Classifies this repository as internal during source selection, verifies the SDK consumer rule and uses tools/oliver/lynx-kernel/build.py with the full runtime-shared -> lynx-core build:lib -> kernel build chain.",
+        "Completes the core prod, core dev and Krypton component ledger before memory analysis, applying the documented failure interaction if preparation fails."
+      ]
+    },
+    {
+      "id": 10,
+      "name": "remote-inputs-forbid-local-discovery-and-cache",
+      "prompt": "业务源码使用 https://github.com/example/app.git 的 release/memory 分支，Lynx 使用 https://code.byted.org/lynx/template-assembler 的 commit abc1234。请准备对应的 JS/map。工作区可能有相同仓库和旧构建，但我未指定任何本地源码路径。",
+      "expected_output": "Fresh remote acquisition and builds for both repositories, with execution logs and resolved revisions.",
+      "files": [],
+      "expectations": [
+        "Does not search, inspect or probe local repositories or old build directories, even to compare origin or HEAD.",
+        "Does not create a worktree from an existing checkout or reuse Git objects, old artifacts, manifests or source-location caches.",
+        "Records fresh acquisition/build commands, statuses, logs, hashes and resolved commits for both sources.",
+        "A failure enters the documented interaction; no local fallback is discovered autonomously."
+      ]
+    },
+    {
+      "id": 11,
+      "name": "explicit-local-path-is-per-source",
+      "prompt": "业务源码用 /tmp/user-selected-app，现有产物可验证后复用。Lynx commit 是 abc1234，但我没提供 Lynx 的仓库 URL 或本地路径。请准备分析环境。",
+      "expected_output": "Inspect only the explicitly selected local frontend source and resolve Lynx automatically through remote probes before fresh acquisition.",
+      "files": [],
+      "expectations": [
+        "Does not use the frontend path or paths to analysis tools as authorization to inspect local Lynx repositories.",
+        "Does not ask for the Lynx repository URL or internal/OSS; probes internal first and selects it whenever accessible, checking OSS only if internal is inaccessible.",
+        "Verifies the commit through fresh remote acquisition, without inspecting local Lynx repositories or caches.",
+        "Records frontend reuse as reuse, preserving local changes and validating JS/maps."
+      ]
+    },
+    {
+      "id": 12,
+      "name": "core-only-manifest-is-incomplete",
+      "prompt": "用户已授权构建所选 internal Lynx 的全部适用公共脚本，SDK loader 包含 Krypton。当前 frontend-prepare 成功，manifest 只有 core prod/dev 项，尚无 Krypton 构建记录。现在可以开始内存分析吗？",
+      "expected_output": "Keep preparation pending and complete Krypton under the existing authorization or follow the source failure interaction.",
+      "files": [],
+      "expectations": [
+        "Does not treat frontend-prepare success, matching HEAD or a source inventory table as proof of component completeness.",
+        "Requires Krypton build commands/logs, JS/map hashes and manifest registration.",
+        "Does not silently omit Krypton or claim source assistance complete."
+      ]
+    },
+    {
+      "id": 13,
+      "name": "concrete-object-finding-requires-anchor",
+      "prompt": "准备导入 analyzer 的 final finding：正文提到 Function@42，evidence_refs 为 /queries/0/samples/0，样本含 node.ord=7、node.id=42 和唯一匹配的 snapshot_sha256，但没有 representative_objects。其它字段完整。",
+      "expected_output": "Reject the incomplete final finding, add the measured node pointer, then finalize and import again.",
+      "files": [],
+      "expectations": [
+        "Requires representative_objects with a label from the prose and evidence_ref /queries/0/samples/0/node.",
+        "Does not guess ordinals from IDs, modify HTML to add a guessed link or use the sample container as the node pointer.",
+        "Verifies the resulting object link targets the correct snapshot/node in both languages.",
+        "If a unique measured node is genuinely unavailable, records object_anchor_gap and translations instead of fabricating an anchor."
+      ]
+    },
+    {
+      "id": 14,
+      "name": "internal-sdk-requires-kernel-build",
+      "prompt": "已按我的选择全新克隆 https://code.byted.org/lynx/template-assembler 并检出指定 commit，准备为 internal iOS SDK Trace 构建公共脚本。checkout 内同时有 tools/oliver/lynx-kernel/build.py 和 lynx/tools/js_tools/build.py，该 revision 的 platform/darwin/ios/lynx/BUILD.gn 引用了前者。请选择构建入口和依赖工作区。",
+      "expected_output": "Use the root internal workspace and kernel entry, with the complete intermediate/final package chain and consumer evidence recorded.",
+      "files": [],
+      "expectations": [
+        "Retains the already established internal repository classification without asking again.",
+        "Selects tools/oliver/lynx-kernel/build.py, root @byted-lynx/kernel... dependencies and oliver/lynx-kernel/output artifacts.",
+        "Includes runtime-shared build, lynx-core build:lib and kernel build:ios in that order.",
+        "Does not treat cd lynx, standalone lynx-core build, matching HEAD, identical output filenames or exit 0 as an equivalent internal SDK build.",
+        "Records the SDK consumer file/line, entry, workspace, package chain, platform and version-variable state before accepting outputs."
+      ]
+    },
+    {
+      "id": 15,
+      "name": "oss-sdk-uses-root-core-build",
+      "prompt": "源码是 https://github.com/lynx-family/lynx.git，已全新克隆并检出用户指定 commit。为 OSS iOS SDK Trace 构建公共脚本；该 revision 的 SDK 配置引用 tools/js_tools/build.py。",
+      "expected_output": "Use the OSS root core build without adding an internal lynx/ prefix or selecting internal kernel paths.",
+      "files": [],
+      "expectations": [
+        "Retains OSS classification and verifies the selected commit's SDK consumer rule.",
+        "Uses tools/js_tools/build.py, the root @lynx-js/lynx-core... workspace dependencies and js_libraries/lynx-core/output.",
+        "Includes runtime-shared build then lynx-core build:ios, rather than the internal build:lib/kernel chain.",
+        "Does not invoke tools/oliver/lynx-kernel/build.py, invent oliver/lynx-kernel or assume an internal Krypton sibling exists.",
+        "Keeps the same Trace interpretation and offset validation rules as internal."
+      ]
+    },
+    {
+      "id": 16,
+      "name": "missing-toolchain-does-not-change-build-family",
+      "prompt": "internal SDK 的构建配置明确调用 tools/oliver/lynx-kernel/build.py，但执行时报告缺 buildtools/corepack。全局 pnpm 可以运行 lynx/ 下的 @lynx-js/lynx-core build。是否可以把这个当作等价构建并继续？",
+      "expected_output": "Diagnose the environment, retry the same kernel target once, then ask skip-runtime-assistance or abort if the retry fails.",
+      "files": [],
+      "expectations": [
+        "Rejects standalone core build as an equivalent expansion of the kernel wrapper.",
+        "Explains that an equivalent expansion must retain the root workspace, runtime-shared build, core build:lib, kernel build and all platform/version/feature settings.",
+        "Does not silently retry with another target or accept standalone core outputs after the actual failed build.",
+        "Checks shell/PATH/toolchain/environment with evidence and retries once in the same fresh checkout; no user question before this recovery attempt.",
+        "Reports the missing toolchain and logs under the existing source-input failure workflow, without claiming the commit is wrong."
+      ]
+    },
+    {
+      "id": 17,
+      "name": "offset-conflict-is-not-revision-proof",
+      "prompt": "internal checkout 的 HEAD 与用户指定 commit 一致，但台账只构建了 lynx/js_libraries/lynx-core，强制 version=1.4.0（来自 Trace 的 LynxEngineVersion），偏移不匹配。可以要求用户换 commit 吗？",
+      "expected_output": "Identify the incorrect final producer and unverified version injection from read-only evidence; do not infer a wrong commit.",
+      "files": [],
+      "expectations": [
+        "Checks repository kind, SDK consumer, entry/workspace/package chain, platform and prod/dev/version parameters before attributing the failure.",
+        "Identifies independent core as the wrong final producer for the internal SDK when its consumer uses kernel.",
+        "Distinguishes the engine version observation from evidence that JS was built with the same version variable.",
+        "Plans separately recorded default and evidence-supported version candidates in the correct family when the captured environment is unknown.",
+        "Does not request another revision without independent evidence, alter JS offsets, exceed the documented environment retry or override an explicit stop."
+      ]
+    },
+    {
+      "id": 18,
+      "name": "trace-version-selects-accessible-internal",
+      "prompt": "Trace 的 LynxEngineVersion.version 为 4.5.1，我已经同意构建公共脚本，未指定源码 URL。internal 的 git ls-remote HEAD 成功；远端有 A_4.5.1 annotated tag，OSS 也可能存在同名 ref。请继续准备。",
+      "expected_output": "Select internal automatically, resolve the exact A_4.5.1 tag and peeled commit, then use fresh internal acquisition and the kernel build entry.",
+      "files": [],
+      "expectations": [
+        "Does not ask internal/OSS, request a missing URL or repeat build consent.",
+        "Selects internal based on its successful accessibility probe without comparing OSS for a better ref match.",
+        "Queries refs/tags/A_4.5.1 and refs/tags/A_4.5.1^{} and records the resolved full commit and probe logs.",
+        "Uses fresh remote acquisition and verifies the internal SDK consumer and kernel entry before building."
+      ]
+    },
+    {
+      "id": 19,
+      "name": "accessible-internal-missing-ref-stays-internal",
+      "prompt": "已授权准备 Lynx 版本 4.5.1，未指定仓库。internal 的 ls-remote HEAD 成功，但精确查询 refs/tags/A_4.5.1 无结果；OSS 存在对应版本。请继续处理。",
+      "expected_output": "Retain internal and report the actual missing-ref blocker through acquisition recovery.",
+      "files": [],
+      "expectations": [
+        "Distinguishes repository accessibility from requested-ref availability and retains internal.",
+        "Does not fall back to OSS, silently choose a different tag/commit or ask which repository family applies.",
+        "Reports the exact ref and query results; requests only the corrected revision or acquisition information needed for recovery.",
+        "Does not infer source opt-out or terminate the analysis merely because the ref lookup failed."
+      ]
+    },
+    {
+      "id": 20,
+      "name": "unavailable-internal-probes-oss-without-pause",
+      "prompt": "已授权使用 Trace 中的 Lynx 4.5.1 构建公共脚本，未指定仓库。internal 可访问性探测报认证错误，OSS 探测成功；OSS 的远端 release 记录指向 v4.5.1，A_4.5.1 不存在。请继续。",
+      "expected_output": "Record internal unavailability, select OSS without an intermediate question, verify its version mapping and prepare the OSS build.",
+      "files": [],
+      "expectations": [
+        "Treats the initial internal availability failure as a selection result and continues to the OSS probe without pausing for user input.",
+        "Records both probe logs and the actual authentication error without requesting credentials.",
+        "Verifies the OSS release/tag evidence linking 4.5.1 to v4.5.1 and records the full commit.",
+        "Uses fresh acquisition and the OSS root core entry; does not assume internal tag names or kernel paths."
+      ]
+    },
+    {
+      "id": 21,
+      "name": "bare-commit-requires-fetch-not-advertised-ref-match",
+      "prompt": "Lynx 使用 commit 710b41823ed73572117b7b6852ed5df6995d4646 构建公共脚本，没有指定 URL。internal 的 ls-remote HEAD 成功，但 ls-remote 的 tag/branch 列表中没有这个 hash；depth-one fetch 该 commit 可以成功。请继续。",
+      "expected_output": "Select internal automatically and verify the supplied commit through a fresh shallow fetch.",
+      "files": [],
+      "expectations": [
+        "Does not treat a commit absent from advertised refs as missing or as evidence that it belongs to OSS.",
+        "Fetches the commit into a new empty internal checkout and verifies FETCH_HEAD^{commit} before detached checkout.",
+        "Does not ask for internal/OSS, a URL or repeated authorization, and does not search local repositories or caches.",
+        "Records origin, requested/full commit and probe/fetch logs, then uses this attempt's fresh checkout for the internal build."
+      ]
+    },
+    {
+      "id": 22,
+      "name": "both-remotes-unavailable-report-access-blocker",
+      "prompt": "已授权准备 Lynx commit 710b41823ed73572117b7b6852ed5df6995d4646，未指定 URL。internal 的可访问性探测认证失败，OSS 的可访问性探测网络超时。请处理。",
+      "expected_output": "Report both access failures and enter targeted acquisition recovery without asking the user to classify the repository.",
+      "files": [],
+      "expectations": [
+        "Attempts the OSS availability probe after internal fails, without an intermediate question.",
+        "Preserves both concrete errors, attempted URLs and full logs; does not claim any revision was verified.",
+        "Asks only for usable access/acquisition information, not for a guess of internal versus OSS.",
+        "Does not search for local fallback, reuse caches, silently skip source preparation or terminate by retry count."
+      ]
+    },
+    {
+      "id": 23,
+      "name": "real-frontend-conflict-reopens-decision",
+      "prompt": "继续分析 leak-exmaple-gc Trace。业务工程 lynx.config.ts 的 ASSET_PREFIX 会改变输出。source-preflight 返回 unresolved：244 个定义中 241 个匹配、3 个名称冲突，旧工具 reason 写着“忽略源码，继续快照分析”。Lynx 已准备，没有用户放弃前端产物的回答。",
+      "expected_output": "Config diagnosis with evidence followed by abort / opt out affected artifacts / explicit artifact locator choices, then wait.",
+      "files": [],
+      "expectations": [
+        "Treats 3 conflicts as a real mismatch despite a high match ratio, and treats the legacy reason as evidence rather than a user decision.",
+        "Inspects config/imported config/build scripts and reports file/line evidence, current values, unknown recording values and likely effects without declaring ASSET_PREFIX the proven sole cause.",
+        "Explicitly includes providing an artifact URL/path as the third option and waits.",
+        "Records frontend pending/mismatch and does not finalize analyzer JSON or deliver the report."
+      ]
+    },
+    {
+      "id": 24,
+      "name": "replacement-mismatch-keeps-loop-open",
+      "prompt": "我选择提供明确产物地址。下载 https://example.test/build2.zip 后仍有 2 个位置冲突；这是第二次换产物。Lynx 已准备，原始前端工程仍是 /tmp/page-source。继续处理。",
+      "expected_output": "Updated mismatch evidence and the same three choices, with no retry-count opt-out.",
+      "files": [],
+      "expectations": [
+        "Preserves /tmp/page-source for original mapping and records the replacement artifact provenance.",
+        "Rechecks supplied bytes and updates config diagnosis; does not default to rebuilding the source project.",
+        "Again offers abort, opt out affected artifacts, or another explicit artifact locator; waits for the answer.",
+        "Does not infer opt-out from repeated failures, time spent or a previous request to continue handling the issue."
+      ]
+    },
+    {
+      "id": 25,
+      "name": "separate-source-and-prebuilt-artifacts",
+      "prompt": "页面前端工程为 /tmp/page-source，产物已经构建好，在 https://example.test/page-output.zip 下载，包含压缩 JS 和 map。Lynx 产物已准备。开始分析。",
+      "expected_output": "Use the supplied artifact bytes for generated binding and map into the separately supplied original source project.",
+      "files": [],
+      "expectations": [
+        "Downloads the specified artifacts without frontend dependency installation or build.",
+        "Records source and artifact origins independently and preserves filenames/bytes.",
+        "Binds snapshot locations to downloaded generated JS first, then its map into /tmp/page-source; does not substitute the artifact directory as source root.",
+        "Does not ask the user to confirm artifact paths or judge map correctness after technical verification."
+      ]
+    },
+    {
+      "id": 26,
+      "name": "explicit-frontend-optout-is-scoped",
+      "prompt": "我明确放弃这个前端产物辅助，继续分析；Lynx 的源码准备仍按原流程做。前端有真实冲突，Lynx 尚未准备。",
+      "expected_output": "Record the frontend opt-out and continue runtime preparation before analysis.",
+      "files": [],
+      "expectations": [
+        "Records the actual user statement for frontend only and does not repeat the same artifact question.",
+        "Does not extend that opt-out to Lynx or mark runtime not-provided.",
+        "Automatically attempts runtime version/remote resolution and asks for missing inputs only on failure.",
+        "Excludes opted-out frontend artifacts from source attribution and explains that scope in the report."
+      ]
+    },
+    {
+      "id": 27,
+      "name": "final-report-cannot-hide-runtime-omission",
+      "prompt": "堆分析已完成，准备交付。source_materials 里前端冲突标为 skipped；Lynx 没有 manifest 或用户决定，报告 limitations 写着“未准备 lynx_core.js / krypton.js”。用户还未答复是否放弃。请完成最终步骤。",
+      "expected_output": "Block finalization, restore missing runtime preparation and resolve the frontend failure with the user.",
+      "files": [],
+      "expectations": [
+        "Does not accept a disclaimer, skipped material or completed heap analysis as closing either source checkpoint.",
+        "Does not invent user statements or source opt-outs to satisfy --source-preparation.",
+        "Returns to automatic runtime preparation and the frontend config diagnosis/three-choice loop.",
+        "Does not deliver the preliminary report as final."
+      ]
+    },
+    {
+      "id": 28,
+      "name": "evidence-gap-does-not-invent-mismatch",
+      "prompt": "已提供前端工程，业务压缩 JS 的函数位置已匹配但无 map；该脚本我接受只定位到生成 JS。另一个未用于分析的业务脚本也没有 map，core dev 变体未被引用，还有一份快照没有 location。所有适用公共脚本都已准备，没有明确位置冲突。请继续。",
+      "expected_output": "Continue within available evidence and record binding limitations without a mismatch question.",
+      "files": [],
+      "expectations": [
+        "Keeps verified generated positions without claiming original-source mapping.",
+        "Treats absent location/unreferenced variants as evidence gaps and records limited binding scope and snapshot hashes.",
+        "Records the accepted scope without asking again; does not ask about the unused script or extend acceptance to a different used script.",
+        "Does not label unbound materials as verified."
+      ]
+    },
+    {
+      "id": 29,
+      "name": "failed-runtime-retry-needs-answer",
+      "prompt": "全新 Lynx checkout 初始化失败，已诊断 PATH/corepack 并按依据修复，再试同一入口仍失败，两次日志已保存。业务产物可用，没有用户放弃运行时辅助的回答。",
+      "expected_output": "Show the concrete failure and ask skip runtime assistance or abort, then wait.",
+      "files": [],
+      "expectations": [
+        "Does not retry indefinitely, change repository/revision/build family, or declare the runtime unavailable and continue.",
+        "Names runtime scope, failed stage, actual error and both logs.",
+        "Waits for the decision and keeps memory analysis/finalization blocked.",
+        "A later explicit runtime opt-out applies to runtime only and retains usable frontend artifacts."
+      ]
+    },
+    {
+      "id": 30,
+      "name": "below-minimum-trace-version-invalid-even-with-existing-tag",
+      "prompt": "Trace 版本预检为 Lynx 1.4.0，internal 远端已有 A_1.4.0 tag。没有显式指定 Lynx 源码/revision，也没放弃源码辅助。是否可以按这个 tag 构建并继续内存分析？",
+      "expected_output": "Reject the metadata-derived version and enter the same source/revision recovery used for a missing tag.",
+      "files": [],
+      "expectations": [
+        "Explains that relevant Trace memory-analysis support started at Lynx 4.5 and versions below 4.5.0 are invalid even with existing tags.",
+        "Does not fetch/build A_1.4.0, switch to an equivalent OSS tag, silently upgrade to 4.5.0 or reuse an older automatic-version manifest.",
+        "Requests usable Lynx source/revision and waits with runtime preparation pending until resolved or explicitly opted out/aborted.",
+        "Does not falsely say the remote tag was absent; distinguishes the version eligibility failure from remote evidence."
+      ]
+    },
+    {
+      "id": 31,
+      "name": "minimum-version-inclusive-and-numeric",
+      "prompt": "分别评估两个独立 Trace 的自动 Lynx 版本选择：一个记录 4.5.0，另一个记录 4.10.0。internal 可访问，各自精确 tag 均存在且可获取。两次分析均无显式源码选择或 opt-out。",
+      "expected_output": "Both versions pass the local floor and continue through their own verified tag/build workflow.",
+      "files": [],
+      "expectations": [
+        "Accepts 4.5.0 as the inclusive minimum and compares 4.10.0 numerically rather than lexicographically.",
+        "Verifies each Trace's own tag/revision and continues preparation without redundant build consent.",
+        "Does not interpret passing the version floor as proof of source/snapshot binding."
+      ]
+    },
+    {
+      "id": 32,
+      "name": "mixed-versions-do-not-mask-invalid-requested-scope",
+      "prompt": "同一 Trace 的进程 A 记录 Lynx 4.4.99，进程 B 记录 4.5.0。我要求分析 A 的页面；两个版本的远端 tag 都存在，未提供显式 Lynx 源码。",
+      "expected_output": "Keep the requested scope's version invalid and request its source/revision rather than borrowing the other process's version.",
+      "files": [],
+      "expectations": [
+        "Uses process/page scope to associate version metadata and rejects A's 4.4.99 despite tag existence.",
+        "Does not use B's 4.5.0 to prepare or attribute A's runtime.",
+        "Enters missing-tag recovery for the requested scope and keeps its preparation pending."
+      ]
+    },
+    {
+      "id": 33,
+      "name": "used-business-location-needs-original-map-decision",
+      "prompt": "已提供前端工程。在源码绑定阶段，正在调查的业务回调只定位到了从发布地址取回的 JS，配套 map 返回 404。还没有泄漏结论，我也没有说过接受仅定位到生成 JS。下一步怎么做？",
+      "expected_output": "Ask for the matching sourcemap or release artifacts, or explicit acceptance of generated-JS precision, and wait.",
+      "files": [],
+      "expectations": [
+        "Asks at binding time, before a confirmed finding. Downloading the matched JS is not consent; keeps the review pending and does not finalize.",
+        "If a map is supplied, validates it against the recorded JS, the used position and the supplied project before continuing; does not ask the user to certify correctness.",
+        "If the user accepts the limitation, records the scope and reply, keeps the generated location, and does not present a text match as an original location."
       ]
     }
   ]

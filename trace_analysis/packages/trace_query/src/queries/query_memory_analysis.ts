@@ -3,6 +3,7 @@
 // LICENSE file in the root directory of this source tree.
 
 import {
+  BtsResidualAnalysis,
   MemoryAnalysisOptions,
   MemoryAnalysisResult,
   MemoryChart,
@@ -15,11 +16,18 @@ import {
   MemoryTrend,
   MemoryValue,
   MemoryVm,
-  SharedBtsLeakEvent,
+  MtsPoolGrowthEvent,
+  MtsPoolMemoryDelta,
   SharedBtsVmAnalysis,
 } from '../types/memory_analysis';
 import { NS_TO_MS } from '../utils/constant';
 import { TraceQuery } from '../utils/trace_query';
+import {
+  createPageGraphicCharts,
+  GraphicComponent,
+  parseGraphicComponent,
+  queryKryptonCharts,
+} from './graphics_memory';
 
 const PAGE_CREATE_EARLY_MS = 200;
 const GC_SETTLE_MS = 10;
@@ -29,7 +37,6 @@ const OVERLAP_PEAK_WINDOW_MS = 3000;
 const HIGH_MEMORY_BYTES = 150 * 1024 * 1024;
 const PAGE_ROLLBACK_BYTES = 2 * 1024 * 1024;
 const MTS_POOL_GROWTH_BYTES = 3 * 1024 * 1024;
-const SHARED_BTS_LEAK_BYTES = 32 * 1024;
 const SUPPORTED_MEMORY_VMS = new Set(['quickjs(gc)', 'quickjs(rc)']);
 
 const URL_EVENT_NAMES = [
@@ -49,6 +56,7 @@ interface RawMemorySample {
   totalBytes: number;
   mts?: MemoryValue;
   uiCounts: Record<string, number>;
+  graphics: GraphicComponent[];
 }
 
 interface RawBtsMemorySample {
@@ -56,6 +64,7 @@ interface RawBtsMemorySample {
   tsMs: number;
   ptr: string;
   memory: MemoryValue;
+  slots: Record<number, number>;
 }
 
 interface RawBtsMemoryTrack {
@@ -84,17 +93,35 @@ interface RawEvent {
   desc: string;
   groupId: string;
   ptr: string;
+  slot?: number;
   snapshotId: string;
   snapshotVmId: string;
   totalLength: number;
   chunkCount: number;
+  retainedBytes?: number;
+  triggerRetainedBytes?: number;
+  previousRetainedBytes?: number;
+  postExitPageCount?: number;
+  captureReason: string;
+  includeInternalAllocations?: boolean;
+  changePercent?: number;
 }
 
 interface RawPoolState {
+  id: number;
   name: 'bts_vm_pool_state' | 'mts_vm_pool_state';
   tsMs: number;
   poolInstanceId: string;
+  url: string;
+  isGlobalPool?: boolean;
   destroyed: boolean;
+  instanceCount: number;
+  memory: MemoryValue;
+}
+
+interface MtsPoolMemorySnapshot {
+  url: string;
+  instanceCount: number;
   memory: MemoryValue;
 }
 
@@ -107,7 +134,6 @@ interface MemoryDataContext {
   traceStartMs: number;
   traceEndMs: number;
   memoryTraceEnabled: boolean;
-  forceGc: boolean;
   events: RawEvent[];
   tracks: Map<number, RawTrack>;
   samples: Map<number, RawMemorySample[]>;
@@ -127,6 +153,13 @@ export interface VMMemoryQuery {
   instanceId?: number;
   vmName?: string;
   generation?: number;
+}
+
+export interface VMMemoryReading extends MemoryValue {
+  available: boolean;
+  sampleId?: number;
+  sampleTsMs?: number;
+  reason?: string;
 }
 
 function toNumber(value: unknown, fallback = 0): number {
@@ -171,13 +204,17 @@ function supportsMemory(vmType: string): boolean {
   return SUPPORTED_MEMORY_VMS.has(vmType.toLowerCase());
 }
 
-function sameNumberSet(left: number[], right: number[]): boolean {
-  if (left.length !== right.length) {
-    return false;
+function parseBtsSlotId(key: string): number | undefined {
+  const match = /^(?:debug\.)?slot_(\d+)$/.exec(key);
+  if (!match?.[1]) {
+    return undefined;
   }
-  const sortedLeft = [...left].sort((a, b) => a - b);
-  const sortedRight = [...right].sort((a, b) => a - b);
-  return sortedLeft.every((value, index) => value === sortedRight[index]);
+  const slotId = Number(match[1]);
+  return Number.isSafeInteger(slotId) && slotId >= 0 && slotId <= 255 ? slotId : undefined;
+}
+
+function isBtsPageSlot(slotId: number | undefined): slotId is number {
+  return slotId !== undefined && Number.isInteger(slotId) && slotId >= 3 && slotId <= 255;
 }
 
 function lastAt<T extends { tsMs: number }>(items: T[], tsMs: number): T | undefined {
@@ -301,10 +338,10 @@ function analyzeTrend(series: MemoryChartSeries, minimumSamples = 10): MemoryTre
     sampleCount: samples.length,
     reason: rising
       ? sparseSamples
-        ? 'GC 后内存水位整体上移，稳健斜率为正，且首尾差异超过噪声阈值。'
+        ? 'VM_GC 后内存水位整体上移，稳健斜率为正，且首尾差异超过噪声阈值。'
         : '平滑后的基线持续上移，稳健斜率为正，且首尾差异超过噪声阈值。'
       : sparseSamples
-        ? '未同时满足 GC 后内存水位整体上移、正斜率和显著首尾差异。'
+        ? '未同时满足 VM_GC 后内存水位整体上移、正斜率和显著首尾差异。'
         : '未同时满足基线持续上移、正斜率和显著首尾差异。',
   };
 }
@@ -327,8 +364,8 @@ async function queryEvents(traceQuery: TraceQuery): Promise<RawEvent[]> {
     'page_uses_bts_vm',
     'BTSRuntime::Destroy',
     'destroy_vm_instance',
+    'VM_GC',
     'RunGC',
-    'will_capture_snapshot',
     'capture_snapshot',
     ...URL_EVENT_NAMES,
   ];
@@ -341,16 +378,30 @@ async function queryEvents(traceQuery: TraceQuery): Promise<RawEvent[]> {
       s.dur,
       MAX(CASE WHEN a.flat_key IN ('debug.instance_id', 'args.instance_id') THEN a.display_value END) instance_id,
       MAX(CASE WHEN a.flat_key IN ('debug.url', 'args.url') THEN a.display_value END) url,
-      MAX(CASE WHEN a.flat_key = 'debug.desc' THEN COALESCE(a.string_value, a.display_value) END) desc,
-      MAX(CASE WHEN a.flat_key = 'debug.group_id' THEN a.display_value END) group_id,
-      MAX(CASE WHEN a.flat_key = 'debug.ptr' THEN a.display_value END) ptr,
+      MAX(
+        CASE
+          WHEN a.flat_key IN ('debug.desc', 'args.desc', 'desc')
+          THEN COALESCE(a.string_value, a.display_value)
+        END
+      ) desc,
+      MAX(CASE WHEN a.flat_key IN ('debug.group_id', 'args.group_id', 'group_id') THEN a.display_value END) group_id,
+      MAX(CASE WHEN a.flat_key IN ('debug.ptr', 'args.ptr', 'ptr') THEN a.display_value END) ptr,
+      MAX(CASE WHEN a.flat_key IN ('debug.slot', 'args.slot') THEN a.display_value END) slot,
       MAX(CASE WHEN a.flat_key = 'debug.snapshot_id' THEN a.display_value END) snapshot_id,
       MAX(CASE WHEN a.flat_key = 'debug.id' THEN a.display_value END) snapshot_vm_id,
       MAX(CASE WHEN a.flat_key = 'debug.total_length' THEN a.display_value END) total_length,
-      MAX(CASE WHEN a.flat_key = 'debug.chunk_count' THEN a.display_value END) chunk_count
+      MAX(CASE WHEN a.flat_key = 'debug.chunk_count' THEN a.display_value END) chunk_count,
+      MAX(CASE WHEN a.flat_key = 'debug.retained_bytes' THEN a.display_value END) retained_bytes,
+      MAX(CASE WHEN a.flat_key = 'debug.trigger_retained_bytes' THEN a.display_value END) trigger_retained_bytes,
+      MAX(CASE WHEN a.flat_key = 'debug.previous_retained_bytes' THEN a.display_value END) previous_retained_bytes,
+      MAX(CASE WHEN a.flat_key = 'debug.post_exit_page_count' THEN a.display_value END) post_exit_page_count,
+      MAX(CASE WHEN a.flat_key = 'debug.capture_reason' THEN a.display_value END) capture_reason,
+      MAX(CASE WHEN a.flat_key = 'debug.include_internal_allocations' THEN a.display_value END) include_internal_allocations,
+      MAX(CASE WHEN a.flat_key = 'debug.change_percent' THEN a.display_value END) change_percent
     FROM slice s
     LEFT JOIN args a ON a.arg_set_id = s.arg_set_id
     WHERE s.name IN (${quotedNames})
+      AND NOT (s.name IN ('LynxShell::~LynxShell', 'BTSRuntime::Destroy', 'VM_GC', 'RunGC') AND s.dur < 0)
     GROUP BY s.id
     ORDER BY s.ts
   `);
@@ -367,10 +418,21 @@ async function queryEvents(traceQuery: TraceQuery): Promise<RawEvent[]> {
       desc: toString(row['desc']),
       groupId: toString(row['group_id']),
       ptr: toString(row['ptr']),
+      slot: toOptionalNumber(row['slot']),
       snapshotId: toString(row['snapshot_id']),
       snapshotVmId: toString(row['snapshot_vm_id']),
       totalLength: toNumber(row['total_length']),
       chunkCount: toNumber(row['chunk_count']),
+      retainedBytes: toOptionalNumber(row['retained_bytes']),
+      triggerRetainedBytes: toOptionalNumber(row['trigger_retained_bytes']),
+      previousRetainedBytes: toOptionalNumber(row['previous_retained_bytes']),
+      postExitPageCount: toOptionalNumber(row['post_exit_page_count']),
+      captureReason: toString(row['capture_reason']),
+      includeInternalAllocations:
+        row['include_internal_allocations'] === null || row['include_internal_allocations'] === undefined
+          ? undefined
+          : ['1', 'true'].includes(toString(row['include_internal_allocations']).toLowerCase()),
+      changePercent: toOptionalNumber(row['change_percent']),
     };
   });
 }
@@ -425,6 +487,7 @@ async function queryTrackAndSampleData(
       tsMs: toNumber(row['ts']) / NS_TO_MS,
       totalBytes: toNumber(row['value']),
       uiCounts: {},
+      graphics: [],
     };
     sampleById.set(sample.id, sample);
     const current = samples.get(track.instanceId) ?? [];
@@ -436,6 +499,7 @@ async function queryTrackAndSampleData(
     SELECT
       c.id counter_id,
       a.flat_key,
+      a.string_value component_json,
       json_extract(a.string_value, '$.category') category,
       json_extract(a.string_value, '$.sizeBytes') size_bytes,
       json_extract(a.string_value, '$.instanceCount') instance_count,
@@ -446,7 +510,8 @@ async function queryTrackAndSampleData(
     WHERE c.track_id IN (${trackIds})
       AND a.string_value IS NOT NULL
       AND json_valid(a.string_value)
-      AND json_extract(a.string_value, '$.category') IS NOT NULL
+      AND (json_extract(a.string_value, '$.category') IS NOT NULL
+        OR lower(a.flat_key) LIKE '%canvas%' OR lower(a.flat_key) LIKE '%animax%')
     ORDER BY c.id
   `);
   for (const row of detailRows) {
@@ -454,7 +519,9 @@ async function queryTrackAndSampleData(
     if (!sample) {
       continue;
     }
-    const category = toString(row['category']);
+    const graphic = parseGraphicComponent(toString(row['component_json']), toString(row['flat_key']));
+    if (graphic) sample.graphics.push(graphic);
+    const category = graphic?.category ?? toString(row['category']);
     const memory: MemoryValue = {
       accumulateBytes: toNumber(row['size_bytes']),
       rssBytes: toNumber(row['base_bytes']) + toNumber(row['page_rss_bytes']),
@@ -505,6 +572,7 @@ async function queryBtsMemoryTracks(traceQuery: TraceQuery): Promise<Map<number,
     ORDER BY c.track_id, c.ts
   `);
   const tracks = new Map<number, RawBtsMemoryTrack>();
+  const samplesById = new Map<number, RawBtsMemorySample>();
   for (const row of rows) {
     const trackId = toNumber(row['track_id']);
     const tsMs = toNumber(row['ts']) / NS_TO_MS;
@@ -517,7 +585,9 @@ async function queryBtsMemoryTracks(traceQuery: TraceQuery): Promise<Map<number,
         accumulateBytes: toNumber(row['value']),
         rssBytes: toNumber(row['base_usage']) + toNumber(row['page_rss_usage']),
       },
+      slots: {},
     };
+    samplesById.set(sample.id, sample);
     const current = tracks.get(trackId) ?? {
       id: trackId,
       name: toString(row['name']),
@@ -531,6 +601,26 @@ async function queryBtsMemoryTracks(traceQuery: TraceQuery): Promise<Map<number,
     current.lastTsMs = Math.max(current.lastTsMs, tsMs);
     current.samples.push(sample);
     tracks.set(trackId, current);
+  }
+  const slotRows = await traceQuery.query(`
+    SELECT c.id counter_id, a.flat_key, a.display_value
+    FROM counter_track ct
+    JOIN counter c ON c.track_id = ct.id
+    JOIN args a ON a.arg_set_id = c.arg_set_id
+    WHERE ct.name GLOB 'bts_vm_acc_*'
+      AND (
+        a.flat_key GLOB 'debug.slot_[0-9]*'
+        OR a.flat_key GLOB 'slot_[0-9]*'
+      )
+    ORDER BY c.id, a.flat_key
+  `);
+  for (const row of slotRows) {
+    const sample = samplesById.get(toNumber(row['counter_id']));
+    const slotId = parseBtsSlotId(toString(row['flat_key']));
+    const value = toNumber(row['display_value'], Number.NaN);
+    if (sample && slotId !== undefined && Number.isFinite(value)) {
+      sample.slots[slotId] = Math.max(0, value);
+    }
   }
   return tracks;
 }
@@ -567,13 +657,14 @@ async function queryPoolStates(traceQuery: TraceQuery): Promise<RawPoolState[]> 
     ORDER BY s.ts, s.id
   `);
   const grouped = new Map<number, Record<string, string>>();
-  const metadata = new Map<number, { name: RawPoolState['name']; tsMs: number }>();
+  const metadata = new Map<number, { id: number; name: RawPoolState['name']; tsMs: number }>();
   for (const row of rows) {
     const id = toNumber(row['id']);
     const args = grouped.get(id) ?? {};
     args[toString(row['flat_key'])] = toString(row['string_value'] ?? row['display_value']);
     grouped.set(id, args);
     metadata.set(id, {
+      id,
       name: toString(row['name']) as RawPoolState['name'],
       tsMs: toNumber(row['ts']) / NS_TO_MS,
     });
@@ -587,22 +678,35 @@ async function queryPoolStates(traceQuery: TraceQuery): Promise<RawPoolState[]> 
     }
     let accumulateBytes = 0;
     let rssBytes = 0;
+    let instanceCount = 0;
     for (const [key, value] of Object.entries(args)) {
       if (!key.startsWith('debug.id_')) {
         continue;
       }
       try {
         const memory = JSON.parse(value) as Record<string, unknown>;
+        instanceCount += 1;
         accumulateBytes += toNumber(memory['acc_usage']);
         rssBytes += toNumber(memory['base_usage']) + toNumber(memory['page_rss_usage']);
       } catch {
         // Ignore malformed pool entries and retain the remaining valid entries.
       }
     }
+    const isGlobalPoolArg = args['debug.is_global_pool'];
+    const isGlobalPool = isGlobalPoolArg === '1' ? true : isGlobalPoolArg === '0' ? false : undefined;
+    const url =
+      event.name === 'mts_vm_pool_state'
+        ? isGlobalPool
+          ? 'global_pool'
+          : args['debug.url']?.trim() || 'Unknown URL'
+        : '';
     states.push({
       ...event,
       poolInstanceId: args['debug.pool_instance_id'] ?? 'bts',
+      url,
+      isGlobalPool,
       destroyed: args['debug.destroyed'] === '1',
+      instanceCount,
       memory: { accumulateBytes, rssBytes },
     });
   }
@@ -668,11 +772,11 @@ function buildPages(
       btsVmType: '',
       btsVmName: '',
       btsVmGeneration: 0,
+      btsSlot: btsCreateEvent?.slot,
       sharedBts: false,
       classification: preExisting ? 'pre-existing' : 'overlapping',
       selected,
       analysis: {
-        sharedBtsLeaks: [],
         trendCharts: [],
         trends: [],
         notes: [],
@@ -705,6 +809,7 @@ function buildVms(events: RawEvent[], pages: MemoryPage[], traceStartMs: number)
       instanceIds: [event.instanceId],
       createTsMs: event.tsMs,
       destroyTsMs: page.destroyTsMs,
+      gcEvents: [],
       destroyed: page.destroyed,
       supportsMemory: supportsMemory(type),
     });
@@ -714,15 +819,28 @@ function buildVms(events: RawEvent[], pages: MemoryPage[], traceStartMs: number)
   const activeByName = new Map<string, MemoryVm>();
   const nextGeneration = new Map<string, number>();
   const btsEvents = events
-    .filter((event) => event.name === 'page_uses_bts_vm' || event.name === 'destroy_vm_instance')
-    .sort((a, b) => a.tsMs - b.tsMs);
+    .filter(
+      (event) => event.name === 'page_uses_bts_vm' || event.name === 'destroy_vm_instance' || event.name === 'VM_GC',
+    )
+    .sort((a, b) => {
+      const leftTsMs = a.name === 'VM_GC' ? a.endTsMs : a.tsMs;
+      const rightTsMs = b.name === 'VM_GC' ? b.endTsMs : b.tsMs;
+      return leftTsMs - rightTsMs || a.id - b.id;
+    });
   for (const event of btsEvents) {
+    if (event.name === 'VM_GC') {
+      const active = activeByPtr.get(event.ptr);
+      if (active) {
+        active.gcEvents.push({ sliceId: event.id, tsMs: event.endTsMs });
+      }
+      continue;
+    }
     if (event.name === 'destroy_vm_instance') {
       const active = activeByPtr.get(event.ptr);
       if (!active) {
         continue;
       }
-      active.destroyTsMs = event.endTsMs;
+      active.destroyTsMs = event.tsMs;
       active.destroyed = true;
       nextGeneration.set(active.name, active.generation + 1);
       for (const [ptr, candidate] of activeByPtr) {
@@ -745,7 +863,7 @@ function buildVms(events: RawEvent[], pages: MemoryPage[], traceStartMs: number)
     let vm = activeByPtr.get(event.ptr) ?? activeByName.get(name);
     if (!vm) {
       const generation = nextGeneration.get(name) ?? 0;
-      vm = {
+      const createdVm: MemoryVm = {
         id: `bts_${name}_${generation}`,
         kind: 'bts',
         name,
@@ -755,11 +873,13 @@ function buildVms(events: RawEvent[], pages: MemoryPage[], traceStartMs: number)
         shared,
         instanceIds: [],
         createTsMs: event.tsMs,
+        gcEvents: [],
         destroyed: false,
         supportsMemory: supportsMemory(normalizeVmEngineDesc(event.desc)),
       };
-      vms.push(vm);
-      activeByName.set(name, vm);
+      vm = createdVm;
+      vms.push(createdVm);
+      activeByName.set(name, createdVm);
     }
     activeByPtr.set(event.ptr, vm);
     if (!vm.instanceIds.includes(event.instanceId)) {
@@ -770,6 +890,7 @@ function buildVms(events: RawEvent[], pages: MemoryPage[], traceStartMs: number)
     page.btsVmName = vm.name;
     page.btsVmGeneration = vm.generation;
     page.btsVmPtr = vm.ptr;
+    page.btsSlot ??= event.slot;
     page.sharedBts = vm.shared;
     page.btsDestroyed = vm.destroyed;
   }
@@ -798,7 +919,7 @@ function assignBtsMemoryTracks(vms: MemoryVm[], tracks: Map<number, RawBtsMemory
   for (const vm of vms.filter((item) => item.kind === 'bts' && item.supportsMemory)) {
     const vmEndTsMs = vm.destroyTsMs ?? traceEndMs;
     const candidates = [...tracks.values()].filter(
-      (track) => track.ptr === vm.ptr && track.firstTsMs >= vm.createTsMs && track.firstTsMs <= vmEndTsMs,
+      (track) => track.ptr === vm.ptr && track.lastTsMs >= vm.createTsMs && track.firstTsMs <= vmEndTsMs,
     );
     if (candidates.length === 1) {
       vm.memoryTrackId = candidates[0]?.id;
@@ -812,16 +933,14 @@ function assignBtsMemoryTracks(vms: MemoryVm[], tracks: Map<number, RawBtsMemory
   return warnings;
 }
 
-function buildSnapshots(events: RawEvent[], vms: MemoryVm[]): MemorySnapshot[] {
-  const willById = new Map(
-    events
-      .filter((event) => event.name === 'will_capture_snapshot' && event.snapshotId)
-      .map((event) => [event.snapshotId, event]),
-  );
+function buildSnapshots(
+  events: RawEvent[],
+  vms: MemoryVm[],
+  pages: MemoryPage[],
+  tracks: Map<number, RawBtsMemoryTrack>,
+): MemorySnapshot[] {
   const snapshots: MemorySnapshot[] = [];
   for (const capture of events.filter((event) => event.name === 'capture_snapshot' && event.snapshotId)) {
-    const will = willById.get(capture.snapshotId);
-    const willTsMs = will?.tsMs ?? capture.tsMs;
     let memory: MemoryValue = { accumulateBytes: 0, rssBytes: 0 };
     let vmType = '';
     if (capture.desc.trimStart().startsWith('{')) {
@@ -836,47 +955,78 @@ function buildSnapshots(events: RawEvent[], vms: MemoryVm[]): MemorySnapshot[] {
         vmType = normalizeVmEngineDesc(capture.desc);
       }
     }
-    const label = capture.snapshotVmId || will?.snapshotVmId || '';
-    let assignedVm: MemoryVm | undefined;
-    const sharedMatch = /^(.*)\(shared bts\)$/.exec(label);
-    const singleMatch = /^instance_(\d+)\(single bts\)$/.exec(label);
-    const mtsMatch = /^instance_(\d+)\(mts\)$/.exec(label);
-    if (sharedMatch?.[1]) {
-      assignedVm = vms.find(
-        (vm) =>
-          vm.kind === 'bts' &&
-          vm.shared &&
-          vm.name === sharedMatch[1] &&
-          vm.createTsMs <= willTsMs &&
-          (vm.destroyTsMs === undefined || willTsMs < vm.destroyTsMs),
+    const label = capture.snapshotVmId;
+    const match =
+      /^(mts_instance|bts_vm|bts_instance|bts_residual|bts_unknown|bts_common|bts_overflow)\/([^/]+)(?:\/slot_(\d+))?$/.exec(
+        label,
       );
-    } else if (singleMatch?.[1]) {
-      const instanceId = Number(singleMatch[1]);
-      assignedVm = vms.find((vm) => vm.kind === 'bts' && vm.instanceIds.includes(instanceId));
-    } else if (mtsMatch?.[1]) {
-      assignedVm = vms.find((vm) => vm.kind === 'mts' && vm.instanceIds.includes(Number(mtsMatch[1])));
+    const kind = (match?.[1] ?? 'unknown') as MemorySnapshot['kind'];
+    const pageScope = ['mts_instance', 'bts_instance', 'bts_residual'].includes(kind);
+    const instanceId = pageScope ? toOptionalNumber(match?.[2]) : undefined;
+    const specialSlot = ({ bts_unknown: 0, bts_common: 1, bts_overflow: 2 } as Record<string, number>)[kind];
+    const slotId = toOptionalNumber(match?.[3]) ?? specialSlot ?? capture.slot;
+    const page = pages.find((item) => item.instanceId === instanceId);
+    const candidates = vms.filter((vm) => {
+      if (vm.createTsMs > capture.tsMs || (vm.destroyTsMs !== undefined && capture.tsMs > vm.destroyTsMs)) return false;
+      if (!pageScope)
+        return (
+          kind !== 'unknown' &&
+          vm.kind === 'bts' &&
+          tracks.get(vm.memoryTrackId ?? -1)?.name === `bts_vm_acc_${match?.[2]}`
+        );
+      if (kind === 'mts_instance') return vm.kind === 'mts' && vm.instanceIds.includes(instanceId ?? -1);
+      return kind !== 'unknown' && vm.id === page?.btsVmId;
+    });
+    const errors: string[] = [];
+    if (candidates.length !== 1) errors.push('快照不能唯一绑定 VM generation。');
+    if (capture.instanceId !== undefined && capture.instanceId !== instanceId)
+      errors.push('instance_id 与范围 ID 冲突。');
+    if (capture.slot !== undefined && capture.slot !== slotId) errors.push('slot 与范围 ID 冲突。');
+    if ((kind === 'bts_instance' || kind === 'bts_residual') && (page?.btsSlot !== slotId || !isBtsPageSlot(slotId))) {
+      errors.push('页面专用 slot 归属不明确。');
+    }
+    if (kind === 'bts_residual' && page?.btsDestroyTsMs !== undefined && capture.tsMs < page.btsDestroyTsMs) {
+      errors.push('residual 采集早于 BTS 页面销毁。');
+    }
+    if (kind === 'bts_residual' && (capture.retainedBytes === undefined || capture.retainedBytes < 0)) {
+      errors.push('residual 缺少有效的 retained_bytes。');
     }
     snapshots.push({
       sliceId: capture.id,
       vmId: label,
       snapshotId: capture.snapshotId,
       index: 0,
-      willTsMs,
       captureTsMs: capture.tsMs,
-      dumpDurationMs: Math.max(0, capture.tsMs - willTsMs),
+      dumpDurationMs: capture.endTsMs > capture.tsMs ? capture.endTsMs - capture.tsMs : undefined,
       totalLength: capture.totalLength,
       chunkCount: capture.chunkCount,
       vmType,
       memory,
-      assignedVmId: assignedVm?.id,
+      assignedVmId: errors.length === 0 ? candidates[0]?.id : undefined,
+      kind,
+      instanceId,
+      slotId,
+      retainedBytes: capture.retainedBytes,
+      triggerRetainedBytes: capture.triggerRetainedBytes,
+      previousRetainedBytes: capture.previousRetainedBytes,
+      postExitPageCount: capture.postExitPageCount,
+      captureReason: capture.captureReason,
+      includeInternalAllocations: capture.includeInternalAllocations,
+      changePercent: capture.changePercent,
+      integrity:
+        capture.chunkCount === 0 && capture.totalLength === 0 && capture.retainedBytes === 0
+          ? 'metadata-only'
+          : 'pending',
+      identityError: errors.length ? errors.join(' ') : undefined,
     });
   }
   const byLabel = new Map<string, MemorySnapshot[]>();
-  for (const snapshot of snapshots.sort((a, b) => a.willTsMs - b.willTsMs)) {
-    const current = byLabel.get(snapshot.vmId) ?? [];
+  for (const snapshot of snapshots.sort((a, b) => a.captureTsMs - b.captureTsMs || a.sliceId - b.sliceId)) {
+    const key = snapshot.assignedVmId ?? snapshot.vmId;
+    const current = byLabel.get(key) ?? [];
     current.push(snapshot);
     snapshot.index = current.length;
-    byLabel.set(snapshot.vmId, current);
+    byLabel.set(key, current);
   }
   return snapshots;
 }
@@ -972,7 +1122,6 @@ function vmMemoryAt(context: MemoryDataContext, vm: MemoryVm, tsMs: number): Mem
 
 function buildSharedBtsVmAnalyses(
   context: MemoryDataContext,
-  leakEvents: SharedBtsLeakEvent[],
   issues: MemoryIssue[],
 ): { charts: MemoryChart[]; analyses: SharedBtsVmAnalysis[] } {
   const charts: MemoryChart[] = [];
@@ -988,28 +1137,54 @@ function buildSharedBtsVmAnalyses(
       if (!memoryTrack) {
         return;
       }
-      const sampleTimes = new Set<number>([startTsMs, endTsMs]);
-      for (const sample of memoryTrack.samples) {
-        if (sample.tsMs >= startTsMs && sample.tsMs <= endTsMs) {
-          sampleTimes.add(sample.tsMs);
-        }
-      }
-      if (sampleTimes.size <= 1) {
+      const trackSamples = memoryTrack.samples.filter((sample) => sample.tsMs >= startTsMs && sample.tsMs <= endTsMs);
+      if (trackSamples.length === 0) {
         return;
       }
-      const sortedSampleTimes = [...sampleTimes].sort((left, right) => left - right);
-      const accumulatePoints = sortedSampleTimes.map((tsMs) => ({
-        tsMs,
-        value: vmMemoryAt(context, vm, tsMs).accumulateBytes,
-        loadedInstanceIds: sharedBtsLoadedPagesAt(context, vm, tsMs),
-      }));
-      const rssPoints = sortedSampleTimes
-        .sort((left, right) => left - right)
-        .map((tsMs) => ({
-          tsMs,
-          value: vmMemoryAt(context, vm, tsMs).rssBytes,
-          loadedInstanceIds: sharedBtsLoadedPagesAt(context, vm, tsMs),
-        }));
+      const chartSamples = [...trackSamples];
+      const lastSample = chartSamples[chartSamples.length - 1];
+      if (lastSample && lastSample.tsMs < endTsMs) {
+        chartSamples.push({ ...lastSample, tsMs: endTsMs });
+      }
+      const slotIds = [
+        ...new Set(chartSamples.flatMap((sample) => Object.keys(sample.slots).map((slotId) => Number(slotId)))),
+      ].sort((left, right) => left - right);
+      const series: MemoryChartSeries[] = slotIds.map((slotId) => {
+        const slotPages = vmPages
+          .filter((page) => page.btsSlot === slotId)
+          .sort((left, right) => left.instanceId - right.instanceId);
+        const name =
+          slotId === 0
+            ? 'slot_0 (unknown)'
+            : slotId === 1
+              ? 'slot_1 (common)'
+              : slotId === 2
+                ? 'slot_2 (overflow)'
+                : slotPages.length === 1
+                  ? `slot_${slotId} (instance_id=${slotPages[0]?.instanceId})`
+                  : slotPages.length > 1
+                    ? `slot_${slotId} (instance_ids=${slotPages.map((page) => page.instanceId).join(', ')})`
+                    : `slot_${slotId}`;
+        return {
+          name,
+          unit: 'bytes',
+          renderMode: 'stacked-area',
+          slotId,
+          points: chartSamples.map((sample) => {
+            const pagesAtSample = slotPages.filter(
+              (page) => page.btsCreateTsMs !== undefined && page.btsCreateTsMs <= sample.tsMs,
+            );
+            return {
+              tsMs: sample.tsMs,
+              value: sample.slots[slotId] ?? 0,
+              instanceIds: pagesAtSample.map((page) => page.instanceId),
+              destroyedInstanceIds: pagesAtSample
+                .filter((page) => page.btsDestroyTsMs !== undefined && page.btsDestroyTsMs <= sample.tsMs)
+                .map((page) => page.instanceId),
+            };
+          }),
+        };
+      });
       const pageIds = new Set(vm.instanceIds);
       const lifecycleEvents: MemoryChartEvent[] = context.events
         .filter(
@@ -1025,17 +1200,18 @@ function buildSharedBtsVmAnalyses(
           return {
             sliceId: event.id,
             name: event.name,
-            tsMs: event.tsMs,
+            tsMs: event.name === 'BTSRuntime::Destroy' ? event.endTsMs : event.tsMs,
             instanceId: event.instanceId,
             url: page?.url || event.url,
           };
         });
-      const gcEvents: MemoryChartEvent[] = context.events
-        .filter((event) => event.name === 'RunGC' && event.tsMs >= startTsMs && event.tsMs <= endTsMs)
+      const vmGcEvents: MemoryChartEvent[] = vm.gcEvents
+        .filter((event) => event.tsMs >= startTsMs && event.tsMs <= endTsMs)
         .map((event) => ({
-          sliceId: event.id,
-          name: event.name,
+          sliceId: event.sliceId,
+          name: 'VM_GC',
           tsMs: event.tsMs,
+          renderMode: 'vertical-line',
         }));
       const destroyEvents: MemoryChartEvent[] = context.events
         .filter(
@@ -1053,66 +1229,41 @@ function buildSharedBtsVmAnalyses(
       const snapshotEvents: MemoryChartEvent[] = context.snapshots
         .filter(
           (snapshot) =>
-            snapshot.assignedVmId === vm.id && snapshot.willTsMs >= startTsMs && snapshot.willTsMs <= endTsMs,
+            snapshot.assignedVmId === vm.id && snapshot.captureTsMs >= startTsMs && snapshot.captureTsMs <= endTsMs,
         )
         .map((snapshot) => ({
           sliceId: snapshot.sliceId,
-          name: 'will_capture_snapshot',
-          tsMs: snapshot.willTsMs,
+          name: 'capture_snapshot',
+          tsMs: snapshot.captureTsMs,
+          instanceId: snapshot.instanceId,
           snapshotId: snapshot.snapshotId,
         }));
-      const events = [...lifecycleEvents, ...gcEvents, ...destroyEvents, ...snapshotEvents].sort(
+      const events = [...lifecycleEvents, ...vmGcEvents, ...destroyEvents, ...snapshotEvents].sort(
         (left, right) => left.tsMs - right.tsMs || left.name.localeCompare(right.name),
       );
-      const issueEvents: MemoryChartEvent[] = leakEvents
-        .filter(
-          (event) => event.issue && event.vmId === vm.id && event.gcEndTsMs >= startTsMs && event.gcEndTsMs <= endTsMs,
-        )
-        .map((event) => ({
-          name: 'shared_bts_possible_leak',
-          tsMs: event.gcEndTsMs,
-          instanceIds: event.instanceIds,
-          confidence: event.confidence,
-          accumulateDeltaBytes: event.accumulateDeltaBytes,
-          rssDeltaBytes: event.rssDeltaBytes,
-        }));
-      const chartEvents = [...events, ...issueEvents].sort(
-        (left, right) => left.tsMs - right.tsMs || left.name.localeCompare(right.name),
-      );
-      const chartId = `shared_bts_heap_${index}`;
+      const chartId = `shared_bts_slots_${index}`;
       const chart: MemoryChart = {
         id: chartId,
-        title: `Shared BTS VM Heap Size: ${vm.name} (generation ${vm.generation})`,
+        title: `Shared BTS VM Slot Memory: ${vm.name} (generation ${vm.generation})`,
         xStartTsMs: startTsMs,
         xEndTsMs: endTsMs,
         zeroBaseline: true,
-        renderMode: 'interval-bars',
-        events: chartEvents,
-        series: [
-          {
-            name: 'BTS Accumulate',
-            unit: 'bytes',
-            renderMode: 'interval-bars',
-            points: accumulatePoints,
-          },
-          {
-            name: 'BTS RSS',
-            unit: 'bytes',
-            renderMode: 'line',
-            points: rssPoints,
-          },
-        ],
+        renderMode: 'stacked-area',
+        events,
+        series,
       };
+      const gcSamples = [
+        ...new Map(
+          vm.gcEvents
+            .map((event) => memoryTrack.samples.find((sample) => sample.tsMs >= event.tsMs && sample.tsMs <= endTsMs))
+            .filter((sample): sample is RawBtsMemorySample => sample !== undefined)
+            .map((sample) => [sample.id, sample]),
+        ).values(),
+      ];
       const gcAccumulateSeries: MemoryChartSeries = {
-        name: 'BTS Accumulate after GC',
+        name: 'BTS Accumulate after VM_GC',
         unit: 'bytes',
-        points: context.gcEvents
-          .map((event) => gcSettledTsMs(event))
-          .filter((tsMs) => tsMs >= memoryTrack.firstTsMs && tsMs <= endTsMs)
-          .map((tsMs) => ({
-            tsMs,
-            value: vmMemoryAt(context, vm, tsMs).accumulateBytes,
-          })),
+        points: gcSamples.map((sample) => ({ tsMs: sample.tsMs, value: sample.memory.accumulateBytes })),
       };
       const gcAccumulateTrend = analyzeTrend(gcAccumulateSeries, 3);
       const createdAfterTraceStart = memoryTrack.firstTsMs > context.traceStartMs + 100;
@@ -1133,7 +1284,7 @@ function buildSharedBtsVmAnalyses(
         issues.push({
           code: 'shared_bts_accumulate_rising',
           title: 'BTS 虚拟机 Accumulate 内存呈上涨趋势',
-          message: `BTS 虚拟机各次 GC 完成后的 Accumulate 内存呈上涨趋势，首尾稳定水位增加 ${gcAccumulateTrend.delta} bytes。`,
+          message: `BTS 虚拟机各次 VM_GC 完成后的 Accumulate 内存呈上涨趋势，首尾稳定水位增加 ${gcAccumulateTrend.delta} bytes。`,
           confidence: 'medium',
           instanceIds: [...vm.instanceIds].sort((left, right) => left - right),
           vmId: vm.id,
@@ -1152,6 +1303,7 @@ function buildSharedBtsVmAnalyses(
         createdAfterTraceStart,
         destroyed: vm.destroyed,
         endRssBytes,
+        endRssSampleTsMs: lastAt(memoryTrack.samples, endTsMs)?.tsMs,
         notDestroyedIssue,
         gcAccumulateTrend,
       });
@@ -1173,20 +1325,6 @@ function sharedBtsLoadedPagesAt(context: MemoryDataContext, vm: MemoryVm, tsMs: 
   });
 }
 
-function sharedBtsLoadedPagesBeforeBtsCreate(context: MemoryDataContext, vm: MemoryVm, tsMs: number): number[] {
-  if (!vm.shared || tsMs < vm.createTsMs || (vm.destroyTsMs !== undefined && tsMs >= vm.destroyTsMs)) {
-    return [];
-  }
-  return vm.instanceIds.filter((instanceId) => {
-    const page = context.pages.find((item) => item.instanceId === instanceId);
-    return (
-      page?.btsCreateTsMs !== undefined &&
-      page.btsCreateTsMs < tsMs &&
-      (page.btsDestroyTsMs === undefined || tsMs < page.btsDestroyTsMs)
-    );
-  });
-}
-
 function pssForPage(context: MemoryDataContext, page: MemoryPage): MemorySeriesPoint[] {
   return (
     context.pssTracks.find((track) => track.upid !== undefined && track.upid === page.processUpid)?.points ??
@@ -1201,27 +1339,78 @@ function poolMemoryAt(
 ): {
   bts: MemoryValue;
   mts: MemoryValue;
+  mtsPools: MtsPoolMemorySnapshot[];
 } {
   const btsState = [...context.poolStates]
     .filter((state) => state.name === 'bts_vm_pool_state' && state.tsMs <= tsMs)
-    .sort((a, b) => b.tsMs - a.tsMs)[0];
+    .sort((a, b) => b.tsMs - a.tsMs || b.id - a.id)[0];
   const latestMtsByPool = new Map<string, RawPoolState>();
-  for (const state of context.poolStates.filter((item) => item.name === 'mts_vm_pool_state' && item.tsMs <= tsMs)) {
+  const eligibleMtsStates = context.poolStates
+    .filter((item) => item.name === 'mts_vm_pool_state' && item.tsMs <= tsMs)
+    .sort((left, right) => left.tsMs - right.tsMs || left.id - right.id);
+  for (const state of eligibleMtsStates) {
     latestMtsByPool.set(state.poolInstanceId, state);
   }
-  const mts = [...latestMtsByPool.values()]
-    .filter((state) => !state.destroyed)
-    .reduce(
-      (total, state) => ({
-        accumulateBytes: total.accumulateBytes + state.memory.accumulateBytes,
-        rssBytes: total.rssBytes + state.memory.rssBytes,
-      }),
-      { accumulateBytes: 0, rssBytes: 0 },
-    );
+  const activeMtsStates = [...latestMtsByPool.values()].filter((state) => !state.destroyed);
+  const mts = activeMtsStates.reduce(
+    (total, state) => ({
+      accumulateBytes: total.accumulateBytes + state.memory.accumulateBytes,
+      rssBytes: total.rssBytes + state.memory.rssBytes,
+    }),
+    { accumulateBytes: 0, rssBytes: 0 },
+  );
+  const mtsPoolsByUrl = new Map<string, MtsPoolMemorySnapshot>();
+  for (const state of activeMtsStates) {
+    const current = mtsPoolsByUrl.get(state.url) ?? {
+      url: state.url,
+      instanceCount: 0,
+      memory: { accumulateBytes: 0, rssBytes: 0 },
+    };
+    current.instanceCount += state.instanceCount;
+    current.memory = {
+      accumulateBytes: current.memory.accumulateBytes + state.memory.accumulateBytes,
+      rssBytes: current.memory.rssBytes + state.memory.rssBytes,
+    };
+    mtsPoolsByUrl.set(state.url, current);
+  }
   return {
     bts: btsState?.memory ?? { accumulateBytes: 0, rssBytes: 0 },
     mts,
+    mtsPools: [...mtsPoolsByUrl.values()].sort((left, right) => left.url.localeCompare(right.url)),
   };
+}
+
+function diffMtsPoolMemory(
+  startPools: MtsPoolMemorySnapshot[],
+  endPools: MtsPoolMemorySnapshot[],
+): MtsPoolMemoryDelta[] {
+  const startByUrl = new Map(startPools.map((pool) => [pool.url, pool]));
+  const endByUrl = new Map(endPools.map((pool) => [pool.url, pool]));
+  const urls = [...new Set([...startByUrl.keys(), ...endByUrl.keys()])].sort((left, right) =>
+    left.localeCompare(right),
+  );
+  return urls.map((url) => {
+    const start = startByUrl.get(url);
+    const end = endByUrl.get(url);
+    const startInstanceCount = start?.instanceCount ?? 0;
+    const endInstanceCount = end?.instanceCount ?? 0;
+    const startAccumulateBytes = start?.memory.accumulateBytes ?? 0;
+    const endAccumulateBytes = end?.memory.accumulateBytes ?? 0;
+    const startRssBytes = start?.memory.rssBytes ?? 0;
+    const endRssBytes = end?.memory.rssBytes ?? 0;
+    return {
+      url,
+      startInstanceCount,
+      endInstanceCount,
+      instanceCountDelta: endInstanceCount - startInstanceCount,
+      startAccumulateBytes,
+      endAccumulateBytes,
+      accumulateDeltaBytes: endAccumulateBytes - startAccumulateBytes,
+      startRssBytes,
+      endRssBytes,
+      rssDeltaBytes: endRssBytes - startRssBytes,
+    };
+  });
 }
 
 function addIssue(issues: MemoryIssue[], issue: MemoryIssue): void {
@@ -1252,7 +1441,7 @@ function createMemoryChart(context: MemoryDataContext, page: MemoryPage, vm?: Me
     endTsMs = page.analysis.rollback.lowestTsMs;
   } else if (page.destroyTsMs !== undefined) {
     const destroyTsMs = page.destroyTsMs;
-    if (context.forceGc) {
+    if (context.memoryTraceEnabled) {
       const gc = firstGcAfter(context, destroyTsMs);
       endTsMs = gc === undefined ? destroyTsMs + GC_SETTLE_MS : gcSettledTsMs(gc);
     } else {
@@ -1360,10 +1549,12 @@ function createPageComponentChart(context: MemoryDataContext, page: MemoryPage):
   };
 }
 
-function analyzePageMetrics(context: MemoryDataContext, issues: MemoryIssue[]): void {
+function analyzePageMetrics(context: MemoryDataContext, issues: MemoryIssue[]): MtsPoolGrowthEvent[] {
   const completedGroups = new Set<string>();
+  const mtsPoolGrowthEvents: MtsPoolGrowthEvent[] = [];
   for (const page of context.pages) {
     page.analysis.componentChart = createPageComponentChart(context, page);
+    createPageGraphicCharts(page, context.samples.get(page.instanceId) ?? [], context.traceEndMs, context.traceStartMs);
   }
 
   for (const page of context.pages.filter((item) => !item.preExisting)) {
@@ -1427,20 +1618,34 @@ function analyzePageMetrics(context: MemoryDataContext, issues: MemoryIssue[]): 
       const poolEndTsMs = Math.max(groupPage.realCreateTsMs, groupPage.destroyTsMs - 100);
       const poolEnd = poolMemoryAt(context, poolEndTsMs);
       const mtsPoolDeltaBytes = poolEnd.mts.rssBytes - poolStart.mts.rssBytes;
+      const pools = diffMtsPoolMemory(poolStart.mtsPools, poolEnd.mtsPools);
       groupPage.analysis.mtsPool = {
         mtsPoolDeltaBytes,
         startTsMs: groupPage.realCreateTsMs,
         endTsMs: poolEndTsMs,
         confidence: 'high',
+        pools,
       };
       if (mtsPoolDeltaBytes > MTS_POOL_GROWTH_BYTES) {
+        const poolUrls = pools.filter((pool) => pool.rssDeltaBytes > 0).map((pool) => pool.url);
         addIssue(issues, {
           code: 'mts_pool_growth',
           title: 'MTS 虚拟机缓存池增长过多',
-          message: `页面生命期内 MTS VM Pool RSS 增长 ${mtsPoolDeltaBytes} bytes，超过 3 MiB。`,
+          message: `页面生命期内 MTS VM Pool RSS 增长 ${mtsPoolDeltaBytes} bytes，超过 3 MiB。归属：${
+            poolUrls.join(', ') || 'Unknown URL'
+          }。`,
           confidence: 'high',
           instanceIds: [groupPage.instanceId],
           valueBytes: mtsPoolDeltaBytes,
+          poolUrls,
+        });
+        mtsPoolGrowthEvents.push({
+          id: `mts_pool_growth_${groupPage.instanceId}_${Math.round(poolEndTsMs)}`,
+          instanceId: groupPage.instanceId,
+          startTsMs: groupPage.realCreateTsMs,
+          endTsMs: poolEndTsMs,
+          totalRssDeltaBytes: mtsPoolDeltaBytes,
+          pools,
         });
       }
     }
@@ -1456,7 +1661,7 @@ function analyzePageMetrics(context: MemoryDataContext, issues: MemoryIssue[]): 
         .sort((a, b) => a.realCreateTsMs - b.realCreateTsMs)[0];
       const nextCreateTsMs = nextPage?.realCreateTsMs ?? Number.POSITIVE_INFINITY;
       let observationStartTsMs = destroyTsMs;
-      if (context.forceGc) {
+      if (context.memoryTraceEnabled) {
         const gc = firstGcAfter(context, destroyTsMs);
         if (gc === undefined) {
           for (const groupPage of groupPages) {
@@ -1489,14 +1694,14 @@ function analyzePageMetrics(context: MemoryDataContext, issues: MemoryIssue[]): 
       }
       const lowestBytes = lowestPoint.value;
       const deltaBytes = lowestBytes - baselinePoint.value;
-      const confidence = context.forceGc ? (deltaBytes < 0 ? 'low' : 'high') : 'low';
+      const confidence = context.memoryTraceEnabled ? (deltaBytes < 0 ? 'low' : 'high') : 'low';
       let message = '';
       if (deltaBytes < 0) {
         message = '页面退出后 PSS 低于页面创建前水位，存在其它内存下降因素。';
       } else if (deltaBytes < PAGE_ROLLBACK_BYTES) {
         message = '页面创建并销毁后 PSS 上涨不明显，内存泄漏概率较低。';
       } else {
-        message = context.forceGc
+        message = context.memoryTraceEnabled
           ? '页面退出并完成 GC 后 PSS 仍有明显上涨。'
           : '页面退出后 PSS 仍有上涨；未开启强制 GC，仅作为低置信度趋势参考。';
       }
@@ -1509,7 +1714,7 @@ function analyzePageMetrics(context: MemoryDataContext, issues: MemoryIssue[]): 
         observationStartTsMs,
         observationEndTsMs,
         confidence,
-        forcedGc: context.forceGc,
+        forcedGc: context.memoryTraceEnabled,
         message,
       } as const;
       for (const groupPage of groupPages) {
@@ -1535,180 +1740,38 @@ function analyzePageMetrics(context: MemoryDataContext, issues: MemoryIssue[]): 
       page.analysis.notes.push('该页面未使用共享 BTS 虚拟机。');
     }
   }
+  return mtsPoolGrowthEvents;
 }
 
-function findSnapshotPairs(context: MemoryDataContext, event: SharedBtsLeakEvent, vm: MemoryVm): void {
-  const snapshots = context.snapshots.filter((snapshot) => snapshot.assignedVmId === vm.id);
-  const vmPages = context.pages.filter((page) => vm.instanceIds.includes(page.instanceId));
-  const pre = snapshots
-    .filter((snapshot) => {
-      if (snapshot.willTsMs >= event.gcEndTsMs) {
-        return false;
-      }
-      const created = vmPages.filter(
-        (page) =>
-          page.btsCreateTsMs !== undefined &&
-          page.btsCreateTsMs >= snapshot.willTsMs &&
-          page.btsCreateTsMs <= event.gcEndTsMs,
-      );
-      return created.every((page) => event.instanceIds.includes(page.instanceId));
-    })
-    .sort((a, b) => b.willTsMs - a.willTsMs)[0];
-  const post = snapshots
-    .filter((snapshot) => {
-      if (snapshot.willTsMs <= event.gcEndTsMs) {
-        return false;
-      }
-      return !vmPages.some(
-        (page) =>
-          page.btsCreateTsMs !== undefined &&
-          page.btsCreateTsMs >= event.gcEndTsMs &&
-          page.btsCreateTsMs <= snapshot.willTsMs,
-      );
-    })
-    .sort((a, b) => a.willTsMs - b.willTsMs)[0];
-  event.preSnapshotId = pre?.snapshotId;
-  event.postSnapshotId = post?.snapshotId;
-  event.analysable = pre !== undefined && post !== undefined;
-}
-
-function analyzeSharedBtsLeaks(
-  context: MemoryDataContext,
-  issues: MemoryIssue[],
-): { events: SharedBtsLeakEvent[]; analysable: SharedBtsLeakEvent[] } {
-  if (!context.forceGc) {
-    return { events: [], analysable: [] };
+function buildResidualAnalyses(context: MemoryDataContext): BtsResidualAnalysis[] {
+  const analyses: BtsResidualAnalysis[] = [];
+  for (const page of context.pages) {
+    if (!page.selected || page.btsVmId === undefined || page.btsSlot === undefined) continue;
+    const snapshots = context.snapshots.filter(
+      (snapshot) => snapshot.kind === 'bts_residual' && snapshot.instanceId === page.instanceId,
+    );
+    if (snapshots.length === 0 && page.btsDestroyTsMs === undefined) continue;
+    const id = `${page.btsVmId}_instance_${page.instanceId}_slot_${page.btsSlot}`;
+    const gaps = snapshots.flatMap((snapshot) => (snapshot.identityError ? [snapshot.identityError] : []));
+    if (snapshots.length === 0) gaps.push('没有该销毁页面的 residual 快照，无法分析对象残留。');
+    if (!isBtsPageSlot(page.btsSlot)) gaps.push('非页面专用 slot，无法归因到单页。');
+    const analysis: BtsResidualAnalysis = {
+      id,
+      vmId: page.btsVmId,
+      instanceId: page.instanceId,
+      slotId: page.btsSlot,
+      destroyTsMs: page.btsDestroyTsMs,
+      snapshotIds: snapshots.map((snapshot) => snapshot.snapshotId),
+      tailComplete: false,
+      status: gaps.length ? 'insufficient' : 'pending',
+      gaps,
+      findings: [],
+      reportAnchor: `residual-instance-${page.instanceId}`,
+    };
+    analyses.push(analysis);
+    page.analysis.residualAnalysisId = id;
   }
-  const events: SharedBtsLeakEvent[] = [];
-  const processedCycles = new Set<string>();
-  for (const vm of context.vms.filter((item) => item.kind === 'bts' && item.shared && item.supportsMemory)) {
-    const vmPages = context.pages.filter((page) => vm.instanceIds.includes(page.instanceId));
-    const createPages = vmPages
-      .filter((page): page is MemoryPage & { btsCreateTsMs: number } => page.btsCreateTsMs !== undefined)
-      .sort((a, b) => b.btsCreateTsMs - a.btsCreateTsMs);
-    for (const gcEvent of context.gcEvents) {
-      const gcTsMs = gcEvent.endTsMs;
-      const gcEndTsMs = gcSettledTsMs(gcEvent);
-      if (gcEndTsMs > context.traceEndMs) {
-        continue;
-      }
-      const endSet = sharedBtsLoadedPagesAt(context, vm, gcEndTsMs);
-      const beginPage = createPages.find(
-        (page) =>
-          page.btsCreateTsMs < gcTsMs &&
-          sameNumberSet(sharedBtsLoadedPagesBeforeBtsCreate(context, vm, page.btsCreateTsMs), endSet),
-      );
-      if (!beginPage) {
-        continue;
-      }
-      const instanceIds = vmPages
-        .filter(
-          (page) =>
-            page.btsCreateTsMs !== undefined &&
-            page.btsDestroyTsMs !== undefined &&
-            page.btsCreateTsMs >= beginPage.btsCreateTsMs &&
-            page.btsDestroyTsMs <= gcEndTsMs,
-        )
-        .map((page) => page.instanceId)
-        .sort((a, b) => a - b);
-      if (instanceIds.length === 0) {
-        continue;
-      }
-      const cycleKey = `${vm.id}:${instanceIds.join(',')}`;
-      if (processedCycles.has(cycleKey)) {
-        continue;
-      }
-      processedCycles.add(cycleKey);
-      const beginMemory = vmMemoryAt(context, vm, beginPage.btsCreateTsMs);
-      const endMemory = vmMemoryAt(context, vm, gcEndTsMs);
-      const accumulateDeltaBytes = endMemory.accumulateBytes - beginMemory.accumulateBytes;
-      const rssDeltaBytes = endMemory.rssBytes - beginMemory.rssBytes;
-      const issue = accumulateDeltaBytes >= SHARED_BTS_LEAK_BYTES;
-      const leakEvent: SharedBtsLeakEvent = {
-        id: `${vm.id}_${Math.round(gcTsMs)}`,
-        vmId: vm.id,
-        instanceIds,
-        beginTsMs: beginPage.btsCreateTsMs,
-        gcTsMs,
-        gcEndTsMs,
-        accumulateDeltaBytes,
-        rssDeltaBytes,
-        confidence: 'medium',
-        issue,
-        analysable: false,
-      };
-      findSnapshotPairs(context, leakEvent, vm);
-      events.push(leakEvent);
-      for (const instanceId of instanceIds) {
-        context.pages.find((page) => page.instanceId === instanceId)?.analysis.sharedBtsLeaks.push(leakEvent);
-      }
-      if (issue) {
-        addIssue(issues, {
-          code: 'shared_bts_possible_leak',
-          title: '共享 BTS 虚拟机可能存在内存泄漏',
-          message: `页面退出并完成 GC 后，共享 BTS Accumulate 增长 ${accumulateDeltaBytes} bytes。`,
-          confidence: 'medium',
-          instanceIds,
-          vmId: vm.id,
-          valueBytes: accumulateDeltaBytes,
-        });
-      }
-    }
-  }
-
-  const singlePageIssueEvents = events.filter((event) => event.issue && event.instanceIds.length === 1);
-  const byUrl = new Map<string, SharedBtsLeakEvent[]>();
-  for (const event of singlePageIssueEvents) {
-    const page = context.pages.find((item) => item.instanceId === event.instanceIds[0]);
-    if (!page?.url || page.repeatedFocusTotal === undefined) {
-      continue;
-    }
-    const current = byUrl.get(page.url) ?? [];
-    current.push(event);
-    byUrl.set(page.url, current);
-  }
-  for (const [url, urlEvents] of byUrl) {
-    urlEvents.sort((a, b) => a.beginTsMs - b.beginTsMs);
-    const first = urlEvents[0];
-    if (!first) {
-      continue;
-    }
-    const allPageRuns = context.pages
-      .filter((page) => page.url === url && page.repeatedFocusTotal !== undefined)
-      .sort((a, b) => a.realCreateTsMs - b.realCreateTsMs);
-    const allEvents = allPageRuns
-      .map((page) => events.find((event) => event.instanceIds.length === 1 && event.instanceIds[0] === page.instanceId))
-      .filter((event): event is SharedBtsLeakEvent => event !== undefined);
-    const firstDominates =
-      allEvents.length > 1 &&
-      first.issue &&
-      allEvents
-        .slice(1)
-        .every((event) => Math.abs(first.accumulateDeltaBytes) >= 10 * Math.abs(event.accumulateDeltaBytes));
-    if (firstDominates) {
-      addIssue(issues, {
-        code: 'shared_bts_first_load_leak',
-        title: '共享 BTS 首次加载泄漏',
-        message: `页面 ${url} 首次加载后的 Accumulate 增量为 ${first.accumulateDeltaBytes} bytes，至少是后续每次的 10 倍。`,
-        confidence: 'high',
-        instanceIds: first.instanceIds,
-        vmId: first.vmId,
-        valueBytes: first.accumulateDeltaBytes,
-      });
-    } else if (allEvents.length === allPageRuns.length && allEvents.every((event) => event.issue)) {
-      addIssue(issues, {
-        code: 'shared_bts_continuous_leak',
-        title: '共享 BTS 连续泄漏',
-        message: `页面 ${url} 每次加载后均出现 Accumulate 增长：${allEvents
-          .map((event) => event.accumulateDeltaBytes)
-          .join(', ')} bytes。`,
-        confidence: 'high',
-        instanceIds: allEvents.flatMap((event) => event.instanceIds),
-        vmId: first.vmId,
-      });
-    }
-  }
-  return { events, analysable: events.filter((event) => event.issue && event.analysable) };
+  return analyses;
 }
 
 function createScenarioTrend(context: MemoryDataContext, page: MemoryPage, options: MemoryAnalysisOptions): void {
@@ -1818,15 +1881,11 @@ async function loadMemoryData(traceQuery: TraceQuery, options: MemoryAnalysisOpt
   const memoryTraceEnabled =
     traceBegin !== undefined &&
     ['1', 'true'].includes((traceArgs.get('debug.enable_memory_trace') ?? '').toLowerCase());
-  const forceGc = ['1', 'true'].includes((traceArgs.get('debug.memory_trace_force_gc') ?? '').toLowerCase());
   const pages = buildPages(events, trackData.tracks, trackData.samples, bounds.startMs, bounds.endMs, options);
   const vms = buildVms(events, pages, bounds.startMs);
   const warnings: string[] = [];
   warnings.push(...assignBtsMemoryTracks(vms, btsMemoryTracks, bounds.endMs));
   classifyPages(pages, bounds.endMs);
-  if (!forceGc) {
-    warnings.push('当前 Trace 未开启 memory_trace_force_gc，页面退出后的回落分析仅为低置信度参考。');
-  }
   if ((options.url !== undefined || options.instanceId !== undefined) && !pages.some((page) => page.selected)) {
     warnings.push('Trace 中没有找到与用户指定 URL 或 instance_id 匹配的页面。');
   }
@@ -1849,14 +1908,13 @@ async function loadMemoryData(traceQuery: TraceQuery, options: MemoryAnalysisOpt
     traceStartMs: bounds.startMs,
     traceEndMs: bounds.endMs,
     memoryTraceEnabled,
-    forceGc,
     events,
     tracks: trackData.tracks,
     samples: trackData.samples,
     btsMemoryTracks,
     pages,
     vms,
-    snapshots: buildSnapshots(events, vms),
+    snapshots: buildSnapshots(events, vms, pages, btsMemoryTracks),
     gcEvents: events.filter((event) => event.name === 'RunGC'),
     pssTracks,
     poolStates,
@@ -1864,7 +1922,7 @@ async function loadMemoryData(traceQuery: TraceQuery, options: MemoryAnalysisOpt
   };
 }
 
-export async function queryVMMemory(traceQuery: TraceQuery, request: VMMemoryQuery): Promise<MemoryValue> {
+export async function queryVMMemory(traceQuery: TraceQuery, request: VMMemoryQuery): Promise<VMMemoryReading> {
   const context = await loadMemoryData(traceQuery, {});
   const vm =
     request.kind === 'mts'
@@ -1873,7 +1931,22 @@ export async function queryVMMemory(traceQuery: TraceQuery, request: VMMemoryQue
           (item) =>
             item.kind === 'bts' && item.name === request.vmName && item.generation === (request.generation ?? 0),
         );
-  return vm ? vmMemoryAt(context, vm, request.tsMs) : { accumulateBytes: 0, rssBytes: 0 };
+  if (!vm?.supportsMemory || request.tsMs < vm.createTsMs || request.tsMs > (vm.destroyTsMs ?? context.traceEndMs)) {
+    return {
+      accumulateBytes: 0,
+      rssBytes: 0,
+      available: false,
+      reason: 'VM 不存在、不支持内存上报或查询时间不在生命周期内。',
+    };
+  }
+  const sample =
+    vm.kind === 'mts'
+      ? memorySampleAt(context, vm.instanceIds[0] ?? -1, request.tsMs)
+      : lastAt(context.btsMemoryTracks.get(vm.memoryTrackId ?? -1)?.samples ?? [], request.tsMs);
+  const memory = sample && ('memory' in sample ? sample.memory : sample.mts);
+  return memory && sample
+    ? { ...memory, available: true, sampleId: sample.id, sampleTsMs: sample.tsMs }
+    : { accumulateBytes: 0, rssBytes: 0, available: false, reason: '没有可用的源样本。' };
 }
 
 export async function querySharedBtsLoadedPages(
@@ -1902,7 +1975,7 @@ export async function queryMemoryAnalysis(
   if (!context.memoryTraceEnabled) {
     const error = 'Trace 未开启内存数据采集。请升级 Lynx 并在录制时启用 enable_memory_trace。';
     return {
-      schemaVersion: 2,
+      schemaVersion: 4,
       valid: false,
       error,
       options,
@@ -1910,16 +1983,15 @@ export async function queryMemoryAnalysis(
         startTsMs: context.traceStartMs,
         endTsMs: context.traceEndMs,
         memoryTraceEnabled: false,
-        forceGc: context.forceGc,
         processUpids,
       },
       pages: context.pages,
       vms: context.vms,
       snapshots: context.snapshots,
-      sharedBtsHeapCharts: [],
+      mtsPoolGrowthEvents: [],
+      sharedBtsSlotCharts: [],
       sharedBtsVmAnalyses: [],
-      sharedBtsLeakEvents: [],
-      analysableLeakEvents: [],
+      residualAnalyses: [],
       issues: [],
       warnings: context.warnings,
       summary: {
@@ -1930,6 +2002,9 @@ export async function queryMemoryAnalysis(
         issueCount: 0,
         selectedInstanceIds: [],
         conclusion: error,
+        confirmedLeakPageCount: 0,
+        suspectedPageCount: 0,
+        incompletePageCount: 0,
       },
     };
   }
@@ -1939,9 +2014,36 @@ export async function queryMemoryAnalysis(
     context.warnings.push('所有 BTS 虚拟机均没有可用的 bts_vm_acc_* 内存轨道，或 VM 类型不支持内存上报。');
   }
   const issues: MemoryIssue[] = [];
-  analyzePageMetrics(context, issues);
-  const leakAnalysis = analyzeSharedBtsLeaks(context, issues);
-  const sharedBtsVmAnalysis = buildSharedBtsVmAnalyses(context, leakAnalysis.events, issues);
+  const mtsPoolGrowthEvents = analyzePageMetrics(context, issues);
+  const kryptonAnalyses = await queryKryptonCharts(traceQuery, context.traceStartMs, context.traceEndMs, context.pages);
+  for (const group of kryptonAnalyses) {
+    const graphicPages = context.pages.filter(
+      (page) =>
+        page.selected &&
+        page.analysis.graphicMemoryChart &&
+        group.processUpid !== undefined &&
+        page.processUpid === group.processUpid,
+    );
+    const events: MemoryChartEvent[] = context.events.flatMap((event) => {
+      const page = graphicPages.find((p) => p.instanceId === event.instanceId);
+      if (!page || !['LynxShell::Create', 'LynxShell::~LynxShell'].includes(event.name)) return [];
+      return [
+        {
+          sliceId: event.id,
+          name: event.name,
+          tsMs: event.name === 'LynxShell::Create' ? event.tsMs : event.endTsMs,
+          instanceId: page.instanceId,
+          url: page.url,
+          btsVmName: page.btsVmName,
+          renderMode: 'bubble',
+        },
+      ];
+    });
+    group.memoryChart.events = events;
+    group.countChart.events = events;
+  }
+  const residualAnalyses = buildResidualAnalyses(context);
+  const sharedBtsVmAnalysis = buildSharedBtsVmAnalyses(context, issues);
   for (const page of context.pages.filter((item) => item.selected)) {
     createScenarioTrend(context, page, options);
   }
@@ -1955,23 +2057,23 @@ export async function queryMemoryAnalysis(
       ? `发现 ${relevantIssues.length} 个与目标页面相关的内存 issue，请查看 HTML 报告中的高亮结论。`
       : '未发现规则命中的高或中置信度内存问题，请结合 HTML 报告检查完整数据。';
   return {
-    schemaVersion: 2,
+    schemaVersion: 4,
     valid: true,
     options,
     trace: {
       startTsMs: context.traceStartMs,
       endTsMs: context.traceEndMs,
       memoryTraceEnabled: true,
-      forceGc: context.forceGc,
       processUpids,
     },
     pages: context.pages,
     vms: context.vms,
     snapshots: context.snapshots,
-    sharedBtsHeapCharts: sharedBtsVmAnalysis.charts,
+    mtsPoolGrowthEvents,
+    sharedBtsSlotCharts: sharedBtsVmAnalysis.charts,
+    kryptonAnalyses,
     sharedBtsVmAnalyses: sharedBtsVmAnalysis.analyses,
-    sharedBtsLeakEvents: leakAnalysis.events,
-    analysableLeakEvents: leakAnalysis.analysable,
+    residualAnalyses,
     issues,
     warnings: context.warnings,
     summary: {
@@ -1982,6 +2084,9 @@ export async function queryMemoryAnalysis(
       issueCount: issues.length,
       selectedInstanceIds,
       conclusion,
+      confirmedLeakPageCount: 0,
+      suspectedPageCount: 0,
+      incompletePageCount: residualAnalyses.length,
     },
   };
 }

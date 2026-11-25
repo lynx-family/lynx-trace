@@ -917,6 +917,7 @@ function isDistComplete() {
     'frontend_bundle.js',
     'engine_bundle.js',
     'traceconv_bundle.js',
+    'snapshot_worker_bundle.js',
     'perfetto.css',
     ...cfg.wasmModules.map((wasmMod) => `${wasmMod}.wasm`),
   ];

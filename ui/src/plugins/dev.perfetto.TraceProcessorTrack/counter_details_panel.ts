@@ -21,6 +21,7 @@ import {
   NUM,
   NUM_NULL,
   STR,
+  STR_NULL,
 } from '../../trace_processor/query_result';
 import {TrackEventDetailsPanel} from '../../public/details_panel';
 import m from 'mithril';
@@ -49,6 +50,7 @@ import {
   SectionWithRightContent,
 } from '../../lynx_perf/common_components/memory/memory_details_section';
 import {
+  BtsVmInstance,
   formatBtsVmInstanceName,
   loadBtsVmInstances,
 } from '../../lynx_perf/common_components/memory/bts_vm_generations';
@@ -61,6 +63,20 @@ import {
   BtsVmMemorySample,
   buildBtsVmMemorySample,
 } from '../../lynx_perf/common_components/memory/bts_vm_memory_details';
+import {
+  buildBtsVmSlotDestroyedInstanceIds,
+  buildBtsVmSlotInstanceIds,
+  buildBtsVmSlotPageUrls,
+  getBtsVmPageMemoryBytes,
+  isBtsVmPageSlot,
+  isBtsVmResidualAccurate,
+  parseBtsVmSlotId,
+} from '../../lynx_perf/common_components/memory/bts_vm_slot_memory';
+import {calculateVmPoolMemoryFromArgs} from '../../lynx_perf/common_components/memory/vm_pool_memory';
+import {
+  findLatestBtsSnapshot,
+  loadMemorySnapshots,
+} from '../../lynx_perf/common_components/memory/memory_snapshots';
 import {lynxPerfGlobals} from '../../lynx_perf/lynx_perf_globals';
 
 interface CounterDetails {
@@ -85,6 +101,13 @@ interface CounterDetails {
 interface BtsVmMemoryDetails extends BtsVmMemorySample {
   vmName: string;
   vmType: string;
+  slotInstanceIds: Readonly<Record<number, ReadonlyArray<number>>>;
+  slotDestroyedInstanceIds: Readonly<Record<number, ReadonlyArray<number>>>;
+  slotResidualAccurate: Readonly<Record<number, boolean>>;
+  slotPageUrls: Readonly<Record<number, Readonly<Record<number, string>>>>;
+  slotSnapshotSliceIds: Readonly<
+    Record<number, Readonly<Record<number, number>>>
+  >;
 }
 
 interface AliveMemoryCounterTrack {
@@ -97,6 +120,13 @@ interface MemoryFocusTarget {
   instanceId: number;
   btsEngineName: string;
   url: string;
+}
+
+interface MtsVmPoolMemoryDetails {
+  url: string;
+  instanceCount: number;
+  sizeBytes: number;
+  rssSizeBytes: number;
 }
 
 interface AliveMemorySummary {
@@ -120,6 +150,14 @@ interface AliveMemorySummary {
       instances: Array<{
         instanceId: number;
         url: string;
+        btsMemoryBytes?: number;
+      }>;
+      destroyedInstances: Array<{
+        instanceId: number;
+        url: string;
+        btsMemoryBytes?: number;
+        isResidualAccurate: boolean;
+        snapshotSliceId?: number;
       }>;
     }
   >;
@@ -129,6 +167,7 @@ interface AliveMemorySummary {
   btsVmPoolRssSizeBytes: number;
   mtsVmPoolSizeBytes: number;
   mtsVmPoolRssSizeBytes: number;
+  mtsVmPools: MtsVmPoolMemoryDetails[];
   totalVmPoolSizeBytes: number;
   totalVmPoolRssSizeBytes: number;
 }
@@ -149,13 +188,16 @@ interface VmEngineDescriptions {
   mainThreadScriptingEngines: Record<number, string>;
   backgroundThreadScriptingEngines: Record<string, string>;
   backgroundThreadScriptingEngineNames: Record<number, string>;
+  backgroundThreadScriptingEngineInstances: Record<string, BtsVmInstance>;
   backgroundThreadScriptingEngineMemoryTrackIds: Record<string, number>;
   instanceUrls: Record<number, string>;
 }
 
 interface VmMemoryValue {
+  sampleTs?: time;
   sizeBytes: number;
   rssSizeBytes: number;
+  slotBytes: Readonly<Record<number, number>>;
 }
 
 interface VmPoolMemorySummary {
@@ -163,6 +205,7 @@ interface VmPoolMemorySummary {
   btsRssSizeBytes: number;
   mtsSizeBytes: number;
   mtsRssSizeBytes: number;
+  mtsPools: MtsVmPoolMemoryDetails[];
 }
 
 const MEMORY_COUNTER_ALIGNMENT_TOLERANCE: duration = 10_000_000n;
@@ -218,29 +261,36 @@ export class CounterDetailsPanel implements TrackEventDetailsPanel {
     }
 
     if (this.isPssTotalTrack()) {
+      const firstEventId = await loadFirstCounterEventId(
+        this.engine,
+        this.sqlSource,
+      );
+      // A future-aligned memory sample must not become the trace-start baseline.
+      const allowNextAlignedMemoryCounters = eventId !== firstEventId;
       const counterDetails = await loadPssTotalCounterDetails(
         this.engine,
         eventId,
         this.sqlSource,
+        allowNextAlignedMemoryCounters,
       );
       this.updateCounterTrackBackgroundHighlight(
         selection,
         getAliveMemoryCounterTrackIds(counterDetails),
-      );
-      const firstEventId = await loadFirstCounterEventId(
-        this.engine,
-        this.sqlSource,
       );
       if (firstEventId === undefined) {
         this.counterDetails = counterDetails;
         return;
       }
 
-      const firstCounterDetails = await loadPssTotalCounterDetails(
-        this.engine,
-        firstEventId,
-        this.sqlSource,
-      );
+      const firstCounterDetails =
+        firstEventId === eventId
+          ? counterDetails
+          : await loadPssTotalCounterDetails(
+              this.engine,
+              firstEventId,
+              this.sqlSource,
+              false,
+            );
       this.counterDetails = addPssMemoryDeltas(
         counterDetails,
         firstCounterDetails,
@@ -330,7 +380,7 @@ export class CounterDetailsPanel implements TrackEventDetailsPanel {
       return m(
         Section,
         {title: 'BTS VM Memory'},
-        m(BtsVmMemoryPanel, this.btsVmMemoryDetails),
+        m(BtsVmMemoryPanel, {...this.btsVmMemoryDetails, trace: this.trace}),
       );
     }
 
@@ -355,7 +405,7 @@ export class CounterDetailsPanel implements TrackEventDetailsPanel {
             trace: this.trace,
           }),
         },
-        m(MemoryPssTotalPanel, {data: counterInfo.args}),
+        m(MemoryPssTotalPanel, {data: counterInfo.args, trace: this.trace}),
       );
     }
     return null;
@@ -447,10 +497,11 @@ async function loadBtsVmMemoryDetails(
   sqlSource: string,
   counterDetails: CounterDetails,
 ): Promise<BtsVmMemoryDetails> {
-  const [assignments, rssValues, annotations] = await Promise.all([
+  const [assignments, rssValues, annotations, snapshots] = await Promise.all([
     loadBtsVmMemoryTrackAssignments(engine, true),
     loadBtsVmRssValues(engine, eventId, sqlSource),
     loadBtsVmAnnotations(engine, eventId, sqlSource),
+    loadMemorySnapshots(engine),
   ]);
   const assignment = assignments.find(({track}) => track.id === trackId);
   const vmName =
@@ -459,6 +510,52 @@ async function loadBtsVmMemoryDetails(
       : formatBtsVmInstanceName(assignment.vm.name, assignment.vm.generation);
   const vmType =
     assignment === undefined ? '' : normalizeVmEngineDesc(assignment.vm.desc);
+  const instanceUrls: Record<number, string> = {};
+  const relevantUses = (assignment?.vm.uses ?? []).filter(
+    (use) => isBtsVmPageSlot(use.slot) && use.ts <= counterDetails.ts,
+  );
+  for (const use of relevantUses) {
+    if (use.url?.trim()) {
+      instanceUrls[use.instanceId] = use.url;
+    }
+  }
+  await Promise.all(
+    relevantUses
+      .filter((use) => instanceUrls[use.instanceId] === undefined)
+      .map((use) =>
+        loadInstanceUrlsFromTemplateEvents(
+          engine,
+          instanceUrls,
+          use.instanceId,
+        ),
+      ),
+  );
+  const slotResidualAccurate: Record<number, boolean> = {};
+  const slotSnapshotSliceIds: Record<number, Record<number, number>> = {};
+  for (const use of relevantUses) {
+    if (
+      use.slot === undefined ||
+      use.destroyTs === undefined ||
+      use.destroyTs > counterDetails.ts
+    ) {
+      continue;
+    }
+    slotResidualAccurate[use.slot] = isBtsVmResidualAccurate(
+      use.destroyTs,
+      counterDetails.ts,
+      assignment?.vm.gcTimestamps ?? [],
+    );
+    const snapshot = findLatestBtsSnapshot(
+      snapshots,
+      use.instanceId,
+      counterDetails.ts,
+      use.slot,
+    );
+    if (snapshot !== undefined) {
+      (slotSnapshotSliceIds[use.slot] ??= {})[use.instanceId] =
+        snapshot.sliceId;
+    }
+  }
 
   return {
     vmName,
@@ -469,6 +566,21 @@ async function loadBtsVmMemoryDetails(
       rssValues.pageRssUsageBytes,
       counterDetails.args,
       annotations,
+    ),
+    slotInstanceIds: buildBtsVmSlotInstanceIds(
+      assignment?.vm.uses ?? [],
+      counterDetails.ts,
+    ),
+    slotDestroyedInstanceIds: buildBtsVmSlotDestroyedInstanceIds(
+      assignment?.vm.uses ?? [],
+      counterDetails.ts,
+    ),
+    slotResidualAccurate,
+    slotSnapshotSliceIds,
+    slotPageUrls: buildBtsVmSlotPageUrls(
+      assignment?.vm.uses ?? [],
+      counterDetails.ts,
+      instanceUrls,
     ),
   };
 }
@@ -629,6 +741,7 @@ async function loadVmEngineDescriptions(
     mainThreadScriptingEngines: {},
     backgroundThreadScriptingEngines: {},
     backgroundThreadScriptingEngineNames: {},
+    backgroundThreadScriptingEngineInstances: {},
     backgroundThreadScriptingEngineMemoryTrackIds: {},
     instanceUrls: {},
   };
@@ -675,6 +788,9 @@ async function loadVmEngineDescriptions(
     );
     vmEngineDescriptions.backgroundThreadScriptingEngines[btsEngineName] =
       normalizeVmEngineDesc(btsVmInstance.desc);
+    vmEngineDescriptions.backgroundThreadScriptingEngineInstances[
+      btsEngineName
+    ] = btsVmInstance;
     const memoryTrack = memoryTrackByVm.get(btsVmInstance);
     if (memoryTrack !== undefined) {
       vmEngineDescriptions.backgroundThreadScriptingEngineMemoryTrackIds[
@@ -704,39 +820,74 @@ async function loadBtsVmMemoryAt(
   ts: time,
 ): Promise<VmMemoryValue> {
   const result = await engine.query(`
+    WITH current_sample AS (
+      SELECT
+        c.ts AS sampleTs,
+        c.value,
+        c.arg_set_id AS argSetId
+      FROM counter c
+      WHERE c.track_id = ${trackId}
+        AND c.ts <= ${ts}
+      ORDER BY c.ts DESC, c.id DESC
+      LIMIT 1
+    )
     SELECT
-      c.value,
+      sample.sampleTs,
+      sample.value,
       CAST(COALESCE((
         SELECT base_arg.display_value
         FROM args base_arg
-        WHERE base_arg.arg_set_id = c.arg_set_id
+        WHERE base_arg.arg_set_id = sample.argSetId
           AND base_arg.flat_key IN ('base_usage', 'debug.base_usage')
         LIMIT 1
       ), '0') AS REAL) AS baseUsage,
       CAST(COALESCE((
         SELECT rss_arg.display_value
         FROM args rss_arg
-        WHERE rss_arg.arg_set_id = c.arg_set_id
+        WHERE rss_arg.arg_set_id = sample.argSetId
           AND rss_arg.flat_key IN ('page_rss_usage', 'debug.page_rss_usage')
         LIMIT 1
-      ), '0') AS REAL) AS pageRssUsage
-    FROM counter c
-    WHERE c.track_id = ${trackId}
-      AND c.ts <= ${ts}
-    ORDER BY c.ts DESC, c.id DESC
-    LIMIT 1
+      ), '0') AS REAL) AS pageRssUsage,
+      slot_arg.flat_key AS slotKey,
+      CAST(slot_arg.display_value AS REAL) AS slotValue
+    FROM current_sample sample
+    LEFT JOIN args slot_arg
+      ON slot_arg.arg_set_id = sample.argSetId
+      AND (
+        slot_arg.flat_key GLOB 'debug.slot_[0-9]*'
+        OR slot_arg.flat_key GLOB 'slot_[0-9]*'
+      )
+    ORDER BY slot_arg.flat_key
   `);
   const row = result.iter({
+    sampleTs: LONG,
     value: NUM,
     baseUsage: NUM,
     pageRssUsage: NUM,
+    slotKey: STR_NULL,
+    slotValue: NUM_NULL,
   });
   if (!row.valid()) {
-    return {sizeBytes: 0, rssSizeBytes: 0};
+    return {sizeBytes: 0, rssSizeBytes: 0, slotBytes: {}};
+  }
+  const sampleTs = Time.fromRaw(row.sampleTs);
+  const sizeBytes = row.value;
+  const rssSizeBytes = row.baseUsage + row.pageRssUsage;
+  const slotBytes: Record<number, number> = {};
+  for (; row.valid(); row.next()) {
+    if (row.slotKey === null || row.slotValue === null) {
+      continue;
+    }
+    const slotId = parseBtsVmSlotId(row.slotKey);
+    if (slotId !== undefined && Number.isFinite(row.slotValue)) {
+      slotBytes[slotId] = Math.max(0, row.slotValue);
+    }
   }
   return {
-    sizeBytes: row.value,
-    rssSizeBytes: row.baseUsage + row.pageRssUsage,
+    sampleTs,
+    sizeBytes,
+    rssSizeBytes,
+    slotBytes,
   };
 }
 
@@ -1095,6 +1246,7 @@ async function loadVmPoolMemorySummary(
     btsRssSizeBytes: 0,
     mtsSizeBytes: 0,
     mtsRssSizeBytes: 0,
+    mtsPools: [],
   };
   const btsPoolStates = await engine.query(`
     SELECT
@@ -1103,7 +1255,7 @@ async function loadVmPoolMemorySummary(
     WHERE name = 'bts_vm_pool_state'
       AND ts <= ${ts}
       AND arg_set_id IS NOT NULL
-    ORDER BY ts DESC
+    ORDER BY ts DESC, id DESC
     LIMIT 1
   `);
   const btsPoolState = btsPoolStates.iter({argSetId: NUM});
@@ -1122,7 +1274,7 @@ async function loadVmPoolMemorySummary(
     WHERE name = 'mts_vm_pool_state'
       AND ts <= ${ts}
       AND arg_set_id IS NOT NULL
-    ORDER BY ts DESC
+    ORDER BY ts DESC, id DESC
   `);
   const loadedMtsPoolIds = new Set<string>();
   for (const it = mtsPoolStates.iter({argSetId: NUM}); it.valid(); it.next()) {
@@ -1140,55 +1292,59 @@ async function loadVmPoolMemorySummary(
     const poolMemory = calculateVmPoolMemoryFromArgs(args);
     summary.mtsSizeBytes += poolMemory.sizeBytes;
     summary.mtsRssSizeBytes += poolMemory.rssSizeBytes;
+    const isGlobalPool = getArgDisplayValue(args, 'debug.is_global_pool');
+    if (isGlobalPool === '0' || isGlobalPool === '1') {
+      const url =
+        isGlobalPool === '1'
+          ? 'global_pool'
+          : getArgDisplayValue(args, 'debug.url')?.trim() || 'Unknown URL';
+      const current = summary.mtsPools.find((pool) => pool.url === url);
+      if (current === undefined) {
+        summary.mtsPools.push({
+          url,
+          instanceCount: poolMemory.instanceCount,
+          sizeBytes: poolMemory.sizeBytes,
+          rssSizeBytes: poolMemory.rssSizeBytes,
+        });
+      } else {
+        current.instanceCount += poolMemory.instanceCount;
+        current.sizeBytes += poolMemory.sizeBytes;
+        current.rssSizeBytes += poolMemory.rssSizeBytes;
+      }
+    }
   }
+  summary.mtsPools.sort((left, right) => left.url.localeCompare(right.url));
 
   return summary;
 }
 
-function calculateVmPoolMemoryFromArgs(args: ArgsDict): {
-  sizeBytes: number;
-  rssSizeBytes: number;
-} {
-  let sizeBytes = 0;
-  let rssSizeBytes = 0;
-  for (const arg of flattenArgs(args)) {
-    if (
-      !arg.flatKey.startsWith('debug.id_') &&
-      !arg.key.startsWith('debug.id_')
-    ) {
-      continue;
-    }
-
-    const argValue =
-      typeof arg.value === 'string' ? arg.value : arg.displayValue;
-    if (!argValue.trimStart().startsWith('{')) {
-      continue;
-    }
-
-    let json: unknown;
-    try {
-      json = JSON.parse(argValue);
-    } catch {
-      continue;
-    }
-    if (typeof json !== 'object' || json === null) {
-      continue;
-    }
-
-    const jsonRecord = json as Record<string, unknown>;
-    sizeBytes += Number(jsonRecord.acc_usage) || 0;
-    rssSizeBytes +=
-      (Number(jsonRecord.base_usage) || 0) +
-      (Number(jsonRecord.page_rss_usage) || 0);
+function getOrCreateBtsEngineMemorySummary(
+  summary: AliveMemorySummary,
+  descriptions: VmEngineDescriptions,
+  btsEngineName: string,
+): AliveMemorySummary['backgroundThreadScriptingEngines'][string] {
+  const current = summary.backgroundThreadScriptingEngines[btsEngineName];
+  if (current !== undefined) {
+    return current;
   }
-
-  return {sizeBytes, rssSizeBytes};
+  const created = {
+    btsEngineName,
+    desc: descriptions.backgroundThreadScriptingEngines[btsEngineName] ?? '',
+    sizeBytes: 0,
+    rssSizeBytes: 0,
+    instanceIds: [],
+    instances: [],
+    destroyedInstances: [],
+  };
+  summary.backgroundThreadScriptingEngines[btsEngineName] = created;
+  return created;
 }
 
 async function loadPssTotalCounterDetails(
   engine: Engine,
   id: number,
   sqlSource: string,
+  allowNextAlignedMemoryCounters = true,
 ): Promise<CounterDetails> {
   const vmEngineDescriptions = await loadVmEngineDescriptions(engine);
   const counterDetails = await loadCounterDetails(engine, id, sqlSource);
@@ -1264,6 +1420,7 @@ async function loadPssTotalCounterDetails(
     btsVmPoolRssSizeBytes: 0,
     mtsVmPoolSizeBytes: 0,
     mtsVmPoolRssSizeBytes: 0,
+    mtsVmPools: [],
     totalVmPoolSizeBytes: 0,
     totalVmPoolRssSizeBytes: 0,
   };
@@ -1273,6 +1430,7 @@ async function loadPssTotalCounterDetails(
   aliveMemorySummary.mtsVmPoolSizeBytes = vmPoolMemorySummary.mtsSizeBytes;
   aliveMemorySummary.mtsVmPoolRssSizeBytes =
     vmPoolMemorySummary.mtsRssSizeBytes;
+  aliveMemorySummary.mtsVmPools = vmPoolMemorySummary.mtsPools;
   aliveMemorySummary.totalVmPoolSizeBytes =
     vmPoolMemorySummary.btsSizeBytes + vmPoolMemorySummary.mtsSizeBytes;
   aliveMemorySummary.totalVmPoolRssSizeBytes =
@@ -1299,6 +1457,7 @@ async function loadPssTotalCounterDetails(
           value
         FROM counter
         WHERE track_id = ${memoryCounterTrack.id}
+          AND ${allowNextAlignedMemoryCounters ? 1 : 0}
           AND ts > ${counterDetails.ts}
           AND ts <= ${memoryCounterAlignmentEndTs}
         ORDER BY ts ASC
@@ -1371,11 +1530,8 @@ async function loadPssTotalCounterDetails(
         const instanceCount = Number(jsonRecord.instanceCount) || 0;
         aliveMemorySummary.componentCounts[category] += instanceCount;
       } else if (category === 'lynxTasmElement') {
-        const detail = jsonRecord.detail;
-        if (typeof detail === 'object' && detail !== null) {
-          aliveMemorySummary.elementCount +=
-            Number((detail as Record<string, unknown>).elementCount) || 0;
-        }
+        aliveMemorySummary.elementCount +=
+          Number(jsonRecord.instanceCount) || 0;
       } else if (category === 'mainThreadScriptingEngine') {
         const sizeBytes = Number(jsonRecord.sizeBytes) || 0;
         const detail = jsonRecord.detail;
@@ -1464,22 +1620,27 @@ async function loadPssTotalCounterDetails(
       continue;
     }
 
-    const desc =
-      vmEngineDescriptions.backgroundThreadScriptingEngines[btsEngineName] ??
-      '';
     const instanceUrl =
       vmEngineDescriptions.instanceUrls[memoryCounterTrack.instanceId] ?? '';
-    const current = aliveMemorySummary.backgroundThreadScriptingEngines[
-      btsEngineName
-    ] ?? {
+    const btsVmInstance =
+      vmEngineDescriptions.backgroundThreadScriptingEngineInstances[
+        btsEngineName
+      ];
+    const use = btsVmInstance?.uses.find(
+      (item) => item.instanceId === memoryCounterTrack.instanceId,
+    );
+    if (
+      use === undefined ||
+      use.ts > counterDetails.ts ||
+      (use.destroyTs !== undefined && use.destroyTs <= counterDetails.ts)
+    ) {
+      continue;
+    }
+    const current = getOrCreateBtsEngineMemorySummary(
+      aliveMemorySummary,
+      vmEngineDescriptions,
       btsEngineName,
-      desc,
-      sizeBytes: 0,
-      rssSizeBytes: 0,
-      instanceIds: [],
-      instances: [],
-    };
-    current.desc = current.desc || desc;
+    );
     if (!current.instanceIds.includes(memoryCounterTrack.instanceId)) {
       current.instanceIds.push(memoryCounterTrack.instanceId);
     }
@@ -1498,9 +1659,66 @@ async function loadPssTotalCounterDetails(
       current;
   }
 
+  for (const [btsEngineName, btsVmInstance] of Object.entries(
+    vmEngineDescriptions.backgroundThreadScriptingEngineInstances,
+  )) {
+    if (
+      btsVmInstance.createTs > counterDetails.ts ||
+      (btsVmInstance.destroyTs !== undefined &&
+        btsVmInstance.destroyTs <= counterDetails.ts)
+    ) {
+      continue;
+    }
+    const destroyedUses = btsVmInstance.uses.filter(
+      (use) =>
+        use.destroyTs !== undefined && use.destroyTs <= counterDetails.ts,
+    );
+    if (destroyedUses.length === 0) {
+      continue;
+    }
+    const current = getOrCreateBtsEngineMemorySummary(
+      aliveMemorySummary,
+      vmEngineDescriptions,
+      btsEngineName,
+    );
+    for (const use of destroyedUses) {
+      if (
+        current.destroyedInstances.some(
+          (instance) => instance.instanceId === use.instanceId,
+        )
+      ) {
+        continue;
+      }
+      current.destroyedInstances.push({
+        instanceId: use.instanceId,
+        url:
+          use.url?.trim() ||
+          vmEngineDescriptions.instanceUrls[use.instanceId] ||
+          '',
+        isResidualAccurate: false,
+      });
+    }
+  }
+
+  const snapshots = await loadMemorySnapshots(engine);
   for (const [btsEngineName, engineInfo] of Object.entries(
     aliveMemorySummary.backgroundThreadScriptingEngines,
   )) {
+    const btsVmInstance =
+      vmEngineDescriptions.backgroundThreadScriptingEngineInstances[
+        btsEngineName
+      ];
+    for (const instance of engineInfo.destroyedInstances) {
+      const use = btsVmInstance?.uses.find(
+        (item) => item.instanceId === instance.instanceId,
+      );
+      instance.snapshotSliceId = findLatestBtsSnapshot(
+        snapshots,
+        instance.instanceId,
+        counterDetails.ts,
+        use?.slot,
+      )?.sliceId;
+    }
     const memoryTrackId =
       vmEngineDescriptions.backgroundThreadScriptingEngineMemoryTrackIds[
         btsEngineName
@@ -1515,6 +1733,29 @@ async function loadPssTotalCounterDetails(
     );
     engineInfo.sizeBytes = memory.sizeBytes;
     engineInfo.rssSizeBytes = memory.rssSizeBytes;
+    for (const instance of engineInfo.instances) {
+      const use = btsVmInstance?.uses.find(
+        (item) => item.instanceId === instance.instanceId,
+      );
+      instance.btsMemoryBytes = getBtsVmPageMemoryBytes(
+        use?.slot,
+        memory.slotBytes,
+      );
+    }
+    for (const instance of engineInfo.destroyedInstances) {
+      const use = btsVmInstance?.uses.find(
+        (item) => item.instanceId === instance.instanceId,
+      );
+      instance.btsMemoryBytes = getBtsVmPageMemoryBytes(
+        use?.slot,
+        memory.slotBytes,
+      );
+      instance.isResidualAccurate = isBtsVmResidualAccurate(
+        use?.destroyTs,
+        memory.sampleTs,
+        btsVmInstance?.gcTimestamps ?? [],
+      );
+    }
   }
 
   const aliveMemoryCounterTracksDisplayValue = JSON.stringify(

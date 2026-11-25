@@ -258,8 +258,15 @@ export interface TrackRenderer {
   getSliceVerticalBounds?(depth: number): VerticalBounds | undefined;
   getHeight?(): number;
   getTrackShellButtons?(): m.Children;
+  // Optional content shown when hovering over the track name.
+  getTrackShellTooltip?(): m.Children;
+  // Optional details for a whole-track selection.
+  renderTrackDetails?(): m.Children;
+  // Optional action when the track name area is clicked.
+  onTrackShellClick?(): void;
   onMouseMove?(event: TrackMouseEvent): void;
   onMouseClick?(event: TrackMouseEvent): boolean;
+  onMouseDoubleClick?(event: TrackMouseEvent): boolean;
   onMouseOut?(): void;
 
   /**

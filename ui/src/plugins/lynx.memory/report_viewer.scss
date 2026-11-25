@@ -1,0 +1,42 @@
+// Copyright 2026 The Lynx Authors. All rights reserved.
+// Licensed under the Apache License Version 2.0.
+
+@import "../../assets/typefaces";
+@import "../../assets/theme_provider";
+@import "../../assets/widgets";
+@import "snapshot_viewer";
+
+html,
+body {
+  margin: 0;
+  background: transparent !important;
+  --topbar-height: 0px;
+}
+* {
+  box-sizing: border-box;
+}
+.pf-memory-report-backdrop {
+  position: fixed;
+  inset: 0;
+  background: var(--pf-color-box-shadow);
+}
+.pf-memory-report-loader {
+  position: fixed;
+  inset: 0 0 0 auto;
+  width: 76%;
+  padding: 32px;
+  background: var(--pf-color-background);
+  color: var(--pf-color-text);
+  font:
+    14px/1.6 Roboto,
+    sans-serif;
+  box-shadow: -8px 0 24px var(--pf-color-box-shadow);
+
+  button {
+    padding: 8px 16px;
+    cursor: pointer;
+  }
+}
+.pf-memory-report-close {
+  float: right;
+}

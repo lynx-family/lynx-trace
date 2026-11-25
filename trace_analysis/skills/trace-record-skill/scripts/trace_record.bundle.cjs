@@ -299,10 +299,6 @@ async function main() {
         .option('--include-categories <categories>', 'Comma-separated trace categories to include', '*')
         .option('--exclude-categories <categories>', 'Comma-separated trace categories to exclude', '*')
         .option('--enable-memory-trace', 'Enable memory data collection', false)
-        .option('--force-gc', 'Enable automatic Garbage Collection', true)
-        .option('--no-force-gc', 'Disable automatic Garbage Collection')
-        .option('--enable-auto-heap-snapshot', 'Enable automatic heap snapshots for "shared-group" VMs', false)
-        .option('--shared-group-id <id>', 'Only capture automatic heap snapshots for the specified "shared-group" VM', '')
         .option('--js-profile-interval <interval>', 'JS profile interval', '-1')
         .option('--js-profile-type <type>', 'JS profile type (quickjs or v8)', '')
         .action(async (options) => {
@@ -321,9 +317,6 @@ async function main() {
                 excludedCategories,
                 enableSystrace: options.enableSystrace,
                 enableMemoryTrace: options.enableMemoryTrace,
-                forceGC: options.forceGc,
-                enableAutoHeapSnapshot: options.enableAutoHeapSnapshot,
-                sharedGroupId: options.sharedGroupId,
                 bufferSize: 200 * 1024,
                 JSProfileInterval: jsProfileInterval,
                 JSProfileType: options.jsProfileType,

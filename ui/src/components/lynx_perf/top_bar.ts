@@ -11,6 +11,8 @@ import {Button} from '../../widgets/button';
 import {Intent} from '../../widgets/common';
 import {PopupPosition} from '../../widgets/popup';
 import {llmState} from '../../lynx_perf/llm_state';
+import {Trace} from '../../public/trace';
+import {snapshotViewerState} from '../../plugins/lynx.memory/snapshot_viewer_state';
 
 export function getScreenSize(): 'large' | 'medium' | 'small' {
   const width =
@@ -25,11 +27,23 @@ export function getScreenSize(): 'large' | 'medium' | 'small' {
   return 'small';
 }
 
-export function renderLynxButtons() {
+export function renderLynxButtons(trace?: Trace) {
   const screenSize = getScreenSize();
+  const snapshotAction = () => {
+    if (!trace) return;
+    const state = snapshotViewerState(trace);
+    if (state.open) state.close();
+    else state.show();
+  };
 
   if (lynxPerfGlobals.state.lynxviewInstances.length === 0) {
-    return null;
+    return trace
+      ? m(Button, {
+          label: 'View Snapshots',
+          icon: 'photo_library',
+          onclick: snapshotAction,
+        })
+      : null;
   }
 
   const assistantAction = () => {
@@ -53,7 +67,6 @@ export function renderLynxButtons() {
       lynxPerfGlobals.changeRightSidebarTab(RightSidebarTab.LynxView);
     }
   };
-
   if (screenSize === 'small') {
     // Show only overflow menu for small screens
     return m(
@@ -73,6 +86,11 @@ export function renderLynxButtons() {
           onclick: assistantAction,
         }),
       m(MenuItem, {
+        label: 'View Snapshots',
+        icon: 'photo_library',
+        onclick: snapshotAction,
+      }),
+      m(MenuItem, {
         label: 'Focus LynxView',
         icon: 'center_focus_strong',
         onclick: lynxViewAction,
@@ -88,6 +106,13 @@ export function renderLynxButtons() {
           intent: Intent.Primary,
           onclick: assistantAction,
         }),
+      m(Button, {
+        className: 'lynx-snapshots',
+        icon: 'photo_library',
+        title: 'View Snapshots',
+        intent: Intent.Primary,
+        onclick: snapshotAction,
+      }),
       m(Button, {
         className: 'lynx-menu',
         icon: 'center_focus_strong',
@@ -106,6 +131,13 @@ export function renderLynxButtons() {
           intent: Intent.Primary,
           onclick: assistantAction,
         }),
+      m(Button, {
+        className: 'lynx-snapshots',
+        label: 'View Snapshots',
+        icon: 'photo_library',
+        intent: Intent.Primary,
+        onclick: snapshotAction,
+      }),
       m(Button, {
         className: 'lynx-menu',
         label: 'Focus LynxView',

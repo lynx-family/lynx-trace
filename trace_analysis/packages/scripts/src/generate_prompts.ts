@@ -119,7 +119,7 @@ import { Prompt } from '../../types/prompt';
 export const prompt: Prompt = {
   name: ${stringifyWithSingleQuotes(info.name)},
   description: ${stringifyWithSingleQuotes(info.description)},
-  prompt: \`${info.prompt.replace(/`/g, '\\`')}\`,
+  prompt: ${stringifyWithBackticks(info.prompt)},
 ${extraFields}};
 
 export default prompt;

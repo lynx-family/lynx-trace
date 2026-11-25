@@ -27,10 +27,11 @@ import {LYNX_MEMORY_PLUGIN_ID} from '../../lynx_perf/constants';
 import {TrackEventDetailsPanel} from '../../public/details_panel';
 import {TrackEventSelection} from '../../public/selection';
 import {Trace} from '../../public/trace';
-import {LONG, NUM, NUM_NULL} from '../../trace_processor/query_result';
+import {LONG, NUM} from '../../trace_processor/query_result';
 import {DetailsShell} from '../../widgets/details_shell';
 import {GridLayout, GridLayoutColumn} from '../../widgets/grid_layout';
 import {Tree, TreeNode} from '../../widgets/tree';
+import {Tooltip} from '../../widgets/tooltip';
 import {
   BTS_RUNTIME_DESTROY,
   BtsVmInstance,
@@ -53,18 +54,38 @@ import {
   formatMemoryDeltaBytes,
 } from '../../lynx_perf/common_components/memory/memory_format';
 import {lynxPerfGlobals} from '../../lynx_perf/lynx_perf_globals';
+import {
+  CAPTURE_SNAPSHOT,
+  MemorySnapshotIdentity,
+  isVmMemorySnapshot,
+  loadMemorySnapshots,
+  memorySnapshotSliceId,
+  memorySnapshotTrackName,
+  parseMemorySnapshotId,
+  selectMemorySnapshot,
+  snapshotCaptureReasonDescription,
+} from '../../lynx_perf/common_components/memory/memory_snapshots';
+import {loadSnapshotContent} from './snapshot_content';
+import {snapshotDownloadFileName} from './snapshot_download';
+import {openSnapshotViewer} from './snapshot_viewer_state';
 
-const CAPTURE_SNAPSHOT = 'capture_snapshot';
 const WILL_CAPTURE_SNAPSHOT = 'will_capture_snapshot';
-const SNAPSHOT_CHUNK = 'snapshot_chunk';
 
 interface SnapshotFileWritableStream {
   write(data: string): Promise<void>;
   close(): Promise<void>;
+  abort(): Promise<void>;
 }
 
 interface SnapshotFileHandle {
   createWritable(): Promise<SnapshotFileWritableStream>;
+}
+
+interface SnapshotDirectoryHandle {
+  getFileHandle(
+    name: string,
+    options: {create: boolean},
+  ): Promise<SnapshotFileHandle>;
 }
 
 interface SaveFilePickerOptions {
@@ -79,6 +100,9 @@ interface WindowWithSaveFilePicker {
   showSaveFilePicker?: (
     options?: SaveFilePickerOptions,
   ) => Promise<SnapshotFileHandle>;
+  showDirectoryPicker?: (options?: {
+    mode: 'readwrite';
+  }) => Promise<SnapshotDirectoryHandle>;
 }
 
 interface SnapshotDesc {
@@ -99,12 +123,12 @@ interface SnapshotDetails {
   chunkSize: number;
   chunkCount: number;
   desc: SnapshotDesc;
-}
-
-interface SnapshotChunk {
-  chunkIndex: number;
-  offset: number;
-  content: string;
+  identity?: MemorySnapshotIdentity;
+  triggerRetainedBytes?: number;
+  retainedBytes?: number;
+  captureReason?: string;
+  postExitPageCount?: number;
+  changePercent?: number;
 }
 
 interface SectionWithRightContentAttrs {
@@ -112,22 +136,24 @@ interface SectionWithRightContentAttrs {
   rightContent?: m.Children;
 }
 
-class SectionWithRightContent implements
-  m.ClassComponent<SectionWithRightContentAttrs> {
+class SectionWithRightContent
+  implements m.ClassComponent<SectionWithRightContentAttrs>
+{
   view({attrs, children}: m.CVnode<SectionWithRightContentAttrs>) {
     return m(
       'section.pf-section',
-      m('header', {
-        style: {
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          gap: '8px',
+      m(
+        'header',
+        {
+          style: {
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '8px',
+          },
         },
-      }, [
-        m('h1', attrs.title),
-        attrs.rightContent,
-      ]),
+        [m('h1', attrs.title), attrs.rightContent],
+      ),
       m('article', children),
     );
   }
@@ -144,6 +170,8 @@ export class MemoryVitalsDetailsPanel implements TrackEventDetailsPanel {
   private snapshotTotal = 0;
   private useDefaultPanel = false;
   private downloading = false;
+  private downloadingAll = false;
+  private downloadedSnapshotCount = 0;
   private destroyedBtsVmName?: string;
   private destroyedBtsVmPtr?: string;
   private btsVmInstancesPromise?: Promise<BtsVmInstance[]>;
@@ -168,7 +196,9 @@ export class MemoryVitalsDetailsPanel implements TrackEventDetailsPanel {
     this.destroyedBtsVmPtr = undefined;
     this.sliceDetail = await getSlice(
       this.ctx.engine,
-      asSliceSqlId(selection.eventId),
+      asSliceSqlId(
+        memorySnapshotSliceId(selection.eventId) ?? selection.eventId,
+      ),
     );
     this.updateCounterTrackBackgroundHighlight(selection, []);
 
@@ -195,10 +225,32 @@ export class MemoryVitalsDetailsPanel implements TrackEventDetailsPanel {
     if (this.currentSnapshot === undefined) {
       return;
     }
-    await this.highlightBtsVmMemoryTrackByName(
-      selection,
-      this.currentSnapshot.vmDisplayName,
-    );
+    const identity = this.currentSnapshot.identity;
+    if (identity !== undefined) {
+      if (isVmMemorySnapshot(identity)) {
+        const trackName = memorySnapshotTrackName(identity);
+        const track = this.ctx.tracks.findTrack(
+          (candidate) => candidate.tags?.counterTrackName === trackName,
+        );
+        this.updateCounterTrackBackgroundHighlight(
+          selection,
+          track?.tags?.trackIds ?? [],
+        );
+      } else if (identity.kind !== 'mts_instance') {
+        await this.highlightBtsVmMemoryTrack(
+          selection,
+          findBtsVmForPage(
+            await this.loadBtsVmInstances(),
+            identity.instanceId,
+          ),
+        );
+      }
+    } else {
+      await this.highlightBtsVmMemoryTrackByName(
+        selection,
+        this.currentSnapshot.vmDisplayName,
+      );
+    }
 
     const snapshots = await this.loadSnapshotsForVm(
       this.currentSnapshot.vmInstanceKey,
@@ -217,7 +269,10 @@ export class MemoryVitalsDetailsPanel implements TrackEventDetailsPanel {
     }
 
     if (this.sliceDetail === undefined) {
-      return m(DetailsShell, {title: 'Memory Snapshot', description: 'Loading...'});
+      return m(DetailsShell, {
+        title: 'Memory Snapshot',
+        description: 'Loading...',
+      });
     }
 
     if (this.sliceDetail.name === DESTROY_VM_INSTANCE) {
@@ -238,20 +293,17 @@ export class MemoryVitalsDetailsPanel implements TrackEventDetailsPanel {
       m(
         GridLayout,
         renderDetails(this.ctx, this.sliceDetail),
-        m(
-          GridLayoutColumn,
-          this.renderSnapshotSection(this.currentSnapshot),
-        ),
+        m(GridLayoutColumn, this.renderSnapshotSection(this.currentSnapshot)),
       ),
     );
   }
 
   private renderDestroyedBtsVm(): m.Children {
     if (this.sliceDetail === undefined) {
-      return m(
-        DetailsShell,
-        {title: 'Destroyed BTS VM', description: 'Loading...'},
-      );
+      return m(DetailsShell, {
+        title: 'Destroyed BTS VM',
+        description: 'Loading...',
+      });
     }
 
     return m(
@@ -375,19 +427,30 @@ export class MemoryVitalsDetailsPanel implements TrackEventDetailsPanel {
   }
 
   private renderSnapshotSection(snapshot: SnapshotDetails): m.Children {
+    const isBtsSlot =
+      snapshot.identity !== undefined &&
+      snapshot.identity.kind !== 'mts_instance' &&
+      snapshot.identity.kind !== 'bts_vm';
+    const slotBytes = this.getSnapshotSlotBytes(snapshot);
+    const previousSlotBytes =
+      this.previousSnapshot === undefined
+        ? undefined
+        : this.getSnapshotSlotBytes(this.previousSnapshot);
+    const slotDelta =
+      slotBytes !== undefined && previousSlotBytes !== undefined
+        ? slotBytes - previousSlotBytes
+        : undefined;
     const rssUsage = snapshot.desc.baseUsage + snapshot.desc.pageRssUsage;
     const accDelta =
-      this.previousSnapshot === undefined ?
-        undefined :
-        snapshot.desc.accUsage - this.previousSnapshot.desc.accUsage;
+      this.previousSnapshot === undefined
+        ? undefined
+        : snapshot.desc.accUsage - this.previousSnapshot.desc.accUsage;
     const rssDelta =
-      this.previousSnapshot === undefined ?
-        undefined :
-        rssUsage -
-          (
-            this.previousSnapshot.desc.baseUsage +
-            this.previousSnapshot.desc.pageRssUsage
-          );
+      this.previousSnapshot === undefined
+        ? undefined
+        : rssUsage -
+          (this.previousSnapshot.desc.baseUsage +
+            this.previousSnapshot.desc.pageRssUsage);
 
     return m(
       SectionWithRightContent,
@@ -398,177 +461,395 @@ export class MemoryVitalsDetailsPanel implements TrackEventDetailsPanel {
       [
         m(Tree, [
           m(TreeNode, {left: 'ID', right: snapshot.vmDisplayName}),
+          snapshot.identity !== undefined &&
+          isVmMemorySnapshot(snapshot.identity)
+            ? null
+            : m(TreeNode, {
+                left: 'Instance ID',
+                right: snapshot.identity?.instanceId ?? 'Unknown',
+              }),
           m(TreeNode, {
             left: 'Snapshot',
             right: `${this.snapshotIndex + 1}/${this.snapshotTotal}`,
           }),
-          m(TreeNode, {left: 'VM Type', right: snapshot.desc.vmType}),
-          m(TreeNode, {
-            left: 'Accumulate',
-            right: this.renderMemoryUsage(snapshot.desc.accUsage, accDelta),
-          }),
-          m(TreeNode, {
-            left: 'RSS',
-            right: this.renderMemoryUsage(rssUsage, rssDelta),
-          }),
+          isBtsSlot
+            ? [
+                m(TreeNode, {
+                  left: this.renderSnapshotFieldLabel(
+                    snapshot.identity?.kind === 'bts_residual'
+                      ? 'Residual'
+                      : 'Accumulate',
+                    snapshot.identity?.kind === 'bts_residual'
+                      ? 'Memory occupied by this page’s BTS VM slot after snapshot collection. GC runs before the snapshot is captured.'
+                      : snapshot.identity !== undefined &&
+                          isVmMemorySnapshot(snapshot.identity)
+                        ? 'Memory occupied by this BTS VM slot after snapshot collection.'
+                        : 'Memory occupied by this page’s BTS VM slot when the snapshot was triggered, before snapshot collection.',
+                  ),
+                  right:
+                    slotBytes === undefined
+                      ? 'Unknown'
+                      : this.renderMemoryUsage(slotBytes, slotDelta),
+                }),
+                snapshot.identity?.kind === 'bts_residual'
+                  ? [
+                      m(TreeNode, {
+                        left: 'Capture reason',
+                        right:
+                          snapshot.captureReason === undefined
+                            ? 'Unknown'
+                            : snapshotCaptureReasonDescription(
+                                snapshot.captureReason,
+                              ),
+                      }),
+                      m(TreeNode, {
+                        left: this.renderSnapshotFieldLabel(
+                          'Post exit pages',
+                          'Number of new pages loaded into the same BTS VM after this page was destroyed, up to this snapshot. Loading new pages may release memory retained in the destroyed page’s slot.',
+                        ),
+                        right: snapshot.postExitPageCount ?? 'Unknown',
+                      }),
+                      m(TreeNode, {
+                        left: 'Delta Percent',
+                        right:
+                          snapshot.changePercent === undefined
+                            ? 'Unknown'
+                            : `${snapshot.changePercent.toFixed(2)}%`,
+                      }),
+                    ]
+                  : null,
+              ]
+            : [
+                m(TreeNode, {left: 'VM Type', right: snapshot.desc.vmType}),
+                m(TreeNode, {
+                  left: 'Accumulate',
+                  right: this.renderMemoryUsage(
+                    snapshot.desc.accUsage,
+                    accDelta,
+                  ),
+                }),
+                m(TreeNode, {
+                  left: 'RSS',
+                  right: this.renderMemoryUsage(rssUsage, rssDelta),
+                }),
+              ],
         ]),
-        m('button', {
-          disabled: this.downloading,
-          onclick: async () => {
-            await this.downloadCurrentSnapshot();
-          },
-          style: {
-            ...this.getSnapshotButtonStyle(!this.downloading),
-            marginTop: '12px',
-            padding: '4px 10px',
-          },
-        }, this.downloading ? 'Downloading...' : 'Download'),
+        this.renderSnapshotDownloadButtons(),
         this.renderSnapshotMemoryCharts(),
       ],
     );
+  }
+
+  private renderSnapshotDownloadButtons(): m.Children {
+    const directoryPickerSupported =
+      (window as unknown as WindowWithSaveFilePicker).showDirectoryPicker !==
+      undefined;
+    return m('div', {style: {display: 'flex', gap: '8px', marginTop: '12px'}}, [
+      m(
+        'button',
+        {
+          disabled: this.downloading,
+          onclick: () => this.downloadCurrentSnapshot(),
+          style: {
+            ...this.getSnapshotButtonStyle(!this.downloading),
+            padding: '4px 10px',
+          },
+        },
+        this.downloading && !this.downloadingAll
+          ? 'Downloading...'
+          : 'Download',
+      ),
+      this.snapshots.length > 1
+        ? m(
+            'button',
+            {
+              disabled: this.downloading || !directoryPickerSupported,
+              title: directoryPickerSupported
+                ? 'Save all snapshots with this ID to a selected directory'
+                : 'Directory downloads require a browser supporting directory selection in a secure context.',
+              onclick: () => this.downloadAllSnapshots(),
+              style: {
+                ...this.getSnapshotButtonStyle(
+                  !this.downloading && directoryPickerSupported,
+                ),
+                padding: '4px 10px',
+              },
+            },
+            this.downloadingAll
+              ? `Downloading ${this.downloadedSnapshotCount}/${this.snapshots.length}...`
+              : 'Download All',
+          )
+        : null,
+      m(
+        'button',
+        {
+          disabled: this.currentSnapshot === undefined,
+          style: {
+            ...this.getSnapshotButtonStyle(this.currentSnapshot !== undefined),
+            padding: '4px 10px',
+          },
+          onclick: () => {
+            if (this.currentSnapshot) {
+              openSnapshotViewer(this.ctx, this.currentSnapshot.sliceId);
+            }
+          },
+        },
+        'View',
+      ),
+    ]);
+  }
+
+  private renderSnapshotFieldLabel(
+    label: string,
+    description: string,
+  ): m.Children {
+    return [
+      label,
+      m(
+        Tooltip,
+        {
+          trigger: m(
+            'span',
+            {
+              'aria-label': `${label} help`,
+              'style': {
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: '12px',
+                height: '12px',
+                marginLeft: '4px',
+                border: '1px solid currentColor',
+                borderRadius: '50%',
+                fontSize: '10px',
+                cursor: 'help',
+                opacity: '0.8',
+              },
+            },
+            '?',
+          ),
+        },
+        description,
+      ),
+    ];
+  }
+
+  private getSnapshotSlotBytes(snapshot: SnapshotDetails): number | undefined {
+    return snapshot.identity?.kind === 'bts_instance'
+      ? snapshot.triggerRetainedBytes
+      : snapshot.retainedBytes;
   }
 
   private renderSnapshotMemoryCharts(): m.Children {
     if (this.snapshots.length === 0) {
       return null;
     }
+    if (
+      this.currentSnapshot?.identity !== undefined &&
+      this.currentSnapshot.identity.kind !== 'mts_instance' &&
+      this.currentSnapshot.identity.kind !== 'bts_vm'
+    ) {
+      return this.renderSnapshotMemoryChart(
+        this.currentSnapshot.identity.kind === 'bts_residual'
+          ? 'Residual'
+          : 'Accumulate',
+        this.snapshots.map((snapshot) => this.getSnapshotSlotBytes(snapshot)),
+      );
+    }
 
-    return m('div', {
-      style: {
-        marginTop: '16px',
+    return m(
+      'div',
+      {
+        style: {
+          marginTop: '16px',
+        },
       },
-    }, [
-      this.renderSnapshotMemoryChart(
-        'Accumulate',
-        this.snapshots.map((snapshot) => snapshot.desc.accUsage),
-      ),
-      this.renderSnapshotMemoryChart(
-        'RSS',
-        this.snapshots.map((snapshot) => this.getSnapshotRssUsage(snapshot)),
-      ),
-    ]);
+      [
+        this.renderSnapshotMemoryChart(
+          'Accumulate',
+          this.snapshots.map((snapshot) => snapshot.desc.accUsage),
+        ),
+        this.renderSnapshotMemoryChart(
+          'RSS',
+          this.snapshots.map((snapshot) => this.getSnapshotRssUsage(snapshot)),
+        ),
+      ],
+    );
   }
 
   private renderSnapshotMemoryChart(
     title: string,
-    values: number[],
+    values: Array<number | undefined>,
   ): m.Children {
-    const width = 360;
     const height = 180;
     const left = 48;
     const right = 12;
     const top = 38;
     const bottom = 32;
+    const valueLabels = values.map((value, index) => {
+      if (value === undefined) {
+        return '';
+      }
+      const previousValue = values[index - 1];
+      const delta =
+        previousValue === undefined
+          ? '-'
+          : formatMemoryDeltaBytes(value - previousValue);
+      return `${formatMemoryBytes(value)}(${delta})`;
+    });
+    const minBarSlotWidth = Math.max(
+      60,
+      ...valueLabels.map((label) => label.length * 5 + 12),
+    );
+    const width = Math.max(360, left + right + values.length * minBarSlotWidth);
     const plotWidth = width - left - right;
     const plotHeight = height - top - bottom;
-    const maxValue = Math.max(1, ...values);
+    const maxValue = Math.max(
+      1,
+      ...values.filter((value): value is number => value !== undefined),
+    );
     const barSlotWidth = plotWidth / values.length;
     const barWidth = Math.max(4, Math.min(24, barSlotWidth * 0.6));
     const labelStep = Math.max(1, Math.ceil(values.length / 8));
 
-    return m('div', {
-      style: {
-        marginTop: '12px',
+    return m(
+      'div',
+      {
+        style: {
+          marginTop: '12px',
+          overflowX: 'auto',
+        },
       },
-    }, [
-      m('div', {
-        style: {
-          marginBottom: '4px',
-          fontSize: '12px',
-          fontWeight: 'bold',
-        },
-      }, title),
-      m('svg', {
-        viewBox: `0 0 ${width} ${height}`,
-        style: {
-          width: '100%',
-          height: '180px',
-          border: '1px solid rgba(0, 0, 0, 0.08)',
-          borderRadius: '3px',
-          background: '#fff',
-        },
-      }, [
-        m('line', {
-          x1: left,
-          y1: top,
-          x2: left,
-          y2: top + plotHeight,
-          stroke: 'rgba(0, 0, 0, 0.35)',
-        }),
-        m('line', {
-          x1: left,
-          y1: top + plotHeight,
-          x2: width - right,
-          y2: top + plotHeight,
-          stroke: 'rgba(0, 0, 0, 0.35)',
-        }),
-        m('text', {
-          'x': left - 6,
-          'y': top + 4,
-          'text-anchor': 'end',
-          'style': {
-            fontSize: '10px',
-            fill: 'rgba(0, 0, 0, 0.65)',
+      [
+        m(
+          'div',
+          {
+            style: {
+              marginBottom: '4px',
+              fontSize: '12px',
+              fontWeight: 'bold',
+            },
           },
-        }, formatMemoryBytes(maxValue)),
-        m('text', {
-          'x': left - 6,
-          'y': top + plotHeight,
-          'text-anchor': 'end',
-          'style': {
-            fontSize: '10px',
-            fill: 'rgba(0, 0, 0, 0.65)',
+          title,
+        ),
+        m(
+          'svg',
+          {
+            viewBox: `0 0 ${width} ${height}`,
+            style: {
+              width: '100%',
+              minWidth: `${width}px`,
+              height: '180px',
+              border: '1px solid rgba(0, 0, 0, 0.08)',
+              borderRadius: '3px',
+              background: '#fff',
+            },
           },
-        }, '0'),
-        values.map((value, index) => {
-          const barHeight = (value / maxValue) * plotHeight;
-          const x = left + index * barSlotWidth +
-            (barSlotWidth - barWidth) / 2;
-          const y = top + plotHeight - barHeight;
-          const selected = index === this.snapshotIndex;
-          const deltaLabel = index === 0 ?
-            '-' :
-            formatMemoryDeltaBytes(value - values[index - 1]);
-          const shouldRenderLabel =
-            index === 0 ||
-            index === values.length - 1 ||
-            selected ||
-            index % labelStep === 0;
+          [
+            m('line', {
+              x1: left,
+              y1: top,
+              x2: left,
+              y2: top + plotHeight,
+              stroke: 'rgba(0, 0, 0, 0.35)',
+            }),
+            m('line', {
+              x1: left,
+              y1: top + plotHeight,
+              x2: width - right,
+              y2: top + plotHeight,
+              stroke: 'rgba(0, 0, 0, 0.35)',
+            }),
+            m(
+              'text',
+              {
+                'x': left - 6,
+                'y': top + 4,
+                'text-anchor': 'end',
+                'style': {
+                  fontSize: '10px',
+                  fill: 'rgba(0, 0, 0, 0.65)',
+                },
+              },
+              formatMemoryBytes(maxValue),
+            ),
+            m(
+              'text',
+              {
+                'x': left - 6,
+                'y': top + plotHeight,
+                'text-anchor': 'end',
+                'style': {
+                  fontSize: '10px',
+                  fill: 'rgba(0, 0, 0, 0.65)',
+                },
+              },
+              '0',
+            ),
+            values.map((value, index) => {
+              if (value === undefined) {
+                return null;
+              }
+              const barHeight = (value / maxValue) * plotHeight;
+              const x =
+                left + index * barSlotWidth + (barSlotWidth - barWidth) / 2;
+              const y = top + plotHeight - barHeight;
+              const selected = index === this.snapshotIndex;
+              const valueLabel = valueLabels[index];
+              const shouldRenderLabel =
+                index === 0 ||
+                index === values.length - 1 ||
+                selected ||
+                index % labelStep === 0;
 
-          return [
-            m('rect', {
-              x,
-              y,
-              width: barWidth,
-              height: barHeight,
-              fill: selected ? '#8e44ad' : '#6fa8dc',
-            }, [
-              m('title', `#${index + 1}: ${formatMemoryBytes(value)}`),
-            ]),
-            shouldRenderLabel ? m('text', {
-              'x': x + barWidth / 2,
-              'y': top + plotHeight + 14,
-              'text-anchor': 'middle',
-              'style': {
-                fontSize: '10px',
-                fill: selected ? '#8e44ad' : 'rgba(0, 0, 0, 0.65)',
-                fontWeight: selected ? 'bold' : 'normal',
-              },
-            }, String(index + 1)) : null,
-            m('text', {
-              'x': x + barWidth / 2,
-              'y': Math.max(10, y - 6),
-              'text-anchor': 'middle',
-              'style': {
-                fontSize: '9px',
-                fill: selected ? '#8e44ad' : 'rgba(0, 0, 0, 0.65)',
-                fontWeight: selected ? 'bold' : 'normal',
-              },
-            }, deltaLabel),
-          ];
-        }),
-      ]),
-    ]);
+              return [
+                m(
+                  'rect',
+                  {
+                    x,
+                    y,
+                    width: barWidth,
+                    height: barHeight,
+                    fill: selected ? '#8e44ad' : '#6fa8dc',
+                  },
+                  [m('title', `#${index + 1}: ${valueLabel}`)],
+                ),
+                shouldRenderLabel
+                  ? m(
+                      'text',
+                      {
+                        'x': x + barWidth / 2,
+                        'y': top + plotHeight + 14,
+                        'text-anchor': 'middle',
+                        'style': {
+                          fontSize: '10px',
+                          fill: selected ? '#8e44ad' : 'rgba(0, 0, 0, 0.65)',
+                          fontWeight: selected ? 'bold' : 'normal',
+                        },
+                      },
+                      String(index + 1),
+                    )
+                  : null,
+                m(
+                  'text',
+                  {
+                    'x': x + barWidth / 2,
+                    'y': Math.max(10, y - 6),
+                    'text-anchor': 'middle',
+                    'style': {
+                      fontSize: '9px',
+                      fill: selected ? '#8e44ad' : 'rgba(0, 0, 0, 0.65)',
+                      fontWeight: selected ? 'bold' : 'normal',
+                    },
+                  },
+                  valueLabel,
+                ),
+              ];
+            }),
+          ],
+        ),
+      ],
+    );
   }
 
   private getSnapshotRssUsage(snapshot: SnapshotDetails): number {
@@ -576,54 +857,64 @@ export class MemoryVitalsDetailsPanel implements TrackEventDetailsPanel {
   }
 
   private renderSnapshotNavigationButtons(): m.Children {
-    return m('div', {
-      style: {
-        display: 'flex',
-        alignItems: 'center',
-        gap: '4px',
+    return m(
+      'div',
+      {
+        style: {
+          display: 'flex',
+          alignItems: 'center',
+          gap: '4px',
+        },
       },
-    }, [
-      this.renderSnapshotNavigationButton('left', this.snapshotIndex > 0),
-      this.renderSnapshotNavigationButton(
-        'right',
-        this.snapshotIndex < this.snapshotTotal - 1,
-      ),
-    ]);
+      [
+        this.renderSnapshotNavigationButton('left', this.snapshotIndex > 0),
+        this.renderSnapshotNavigationButton(
+          'right',
+          this.snapshotIndex < this.snapshotTotal - 1,
+        ),
+      ],
+    );
   }
 
   private renderSnapshotNavigationButton(
     direction: 'left' | 'right',
     enabled: boolean,
   ): m.Children {
-    return m('button', {
-      disabled: !enabled,
-      onclick: (e: Event) => {
-        e.stopPropagation();
-        if (!enabled) {
-          return;
-        }
+    return m(
+      'button',
+      {
+        disabled: !enabled,
+        onclick: (e: Event) => {
+          e.stopPropagation();
+          if (!enabled) {
+            return;
+          }
 
-        this.selectSnapshot(
-          direction === 'left' ? this.snapshotIndex - 1 : this.snapshotIndex + 1,
-        );
+          this.selectSnapshot(
+            direction === 'left'
+              ? this.snapshotIndex - 1
+              : this.snapshotIndex + 1,
+          );
+        },
+        style: {
+          ...this.getSnapshotButtonStyle(enabled),
+          width: '24px',
+          height: '22px',
+        },
+        title: direction === 'left' ? 'Previous snapshot' : 'Next snapshot',
       },
-      style: {
-        ...this.getSnapshotButtonStyle(enabled),
-        width: '24px',
-        height: '22px',
-      },
-      title: direction === 'left' ? 'Previous snapshot' : 'Next snapshot',
-    }, m('span', {
-      style: {
-        width: '0',
-        height: '0',
-        borderTop: '5px solid transparent',
-        borderBottom: '5px solid transparent',
-        ...(direction === 'left' ?
-          {borderRight: '8px solid #333'} :
-          {borderLeft: '8px solid #333'}),
-      },
-    }));
+      m('span', {
+        style: {
+          width: '0',
+          height: '0',
+          borderTop: '5px solid transparent',
+          borderBottom: '5px solid transparent',
+          ...(direction === 'left'
+            ? {borderRight: '8px solid #333'}
+            : {borderLeft: '8px solid #333'}),
+        },
+      }),
+    );
   }
 
   private getSnapshotButtonStyle(enabled: boolean) {
@@ -646,10 +937,17 @@ export class MemoryVitalsDetailsPanel implements TrackEventDetailsPanel {
 
     this.setCurrentSnapshot(index);
     if (this.currentSnapshot !== undefined) {
-      this.ctx.selection.selectTrackEvent(
-        LYNX_MEMORY_PLUGIN_ID,
-        this.currentSnapshot.sliceId,
-      );
+      if (this.currentSnapshot.identity !== undefined) {
+        selectMemorySnapshot(this.ctx, {
+          ...this.currentSnapshot.identity,
+          sliceId: this.currentSnapshot.sliceId,
+        });
+      } else {
+        this.ctx.selection.selectTrackEvent(
+          LYNX_MEMORY_PLUGIN_ID,
+          this.currentSnapshot.sliceId,
+        );
+      }
     }
     m.redraw();
   }
@@ -657,8 +955,7 @@ export class MemoryVitalsDetailsPanel implements TrackEventDetailsPanel {
   private setCurrentSnapshot(index: number) {
     this.snapshotIndex = index;
     this.currentSnapshot = this.snapshots[index];
-    this.previousSnapshot =
-      index > 0 ? this.snapshots[index - 1] : undefined;
+    this.previousSnapshot = index > 0 ? this.snapshots[index - 1] : undefined;
   }
 
   private async downloadCurrentSnapshot() {
@@ -666,14 +963,28 @@ export class MemoryVitalsDetailsPanel implements TrackEventDetailsPanel {
       return;
     }
 
+    const snapshot = this.currentSnapshot;
+    const fileName = this.snapshotFileName(snapshot, this.snapshotIndex);
     this.downloading = true;
     m.redraw();
     try {
-      const content = await this.loadSnapshotContent(this.currentSnapshot);
-      const fileName =
-        `${this.currentSnapshot.vmDisplayName}` +
-        `#${this.snapshotIndex + 1}.heapsnapshot`;
-      await this.saveSnapshotFile(fileName, content);
+      const picker = window as unknown as WindowWithSaveFilePicker;
+      // Open the picker before loading chunks to preserve click activation.
+      const fileHandle = await picker.showSaveFilePicker?.({
+        suggestedName: fileName,
+        types: [
+          {
+            description: 'Heap Snapshot',
+            accept: {'application/json': ['.heapsnapshot']},
+          },
+        ],
+      });
+      const content = await this.loadSnapshotContent(snapshot);
+      if (fileHandle !== undefined) {
+        await this.writeSnapshotFile(fileHandle, content);
+      } else {
+        downloadData(fileName, new TextEncoder().encode(content).buffer);
+      }
     } catch (e) {
       if (this.isSaveFileCancelled(e)) {
         return;
@@ -686,107 +997,108 @@ export class MemoryVitalsDetailsPanel implements TrackEventDetailsPanel {
     }
   }
 
-  private async loadSnapshotContent(snapshot: SnapshotDetails): Promise<string> {
-    const chunks = await this.loadSnapshotChunks(snapshot);
-    return chunks.map((chunk) => chunk.content).join('');
+  private snapshotFileName(snapshot: SnapshotDetails, index: number): string {
+    return snapshotDownloadFileName(snapshot.vmDisplayName, index + 1);
   }
 
-  private async loadSnapshotChunks(
-    snapshot: SnapshotDetails,
-  ): Promise<SnapshotChunk[]> {
-    const result = await this.ctx.engine.query(`
-      SELECT
-        id,
-        arg_set_id as argSetId
-      FROM slice
-      WHERE name = '${SNAPSHOT_CHUNK}'
-        AND arg_set_id IS NOT NULL
-      ORDER BY ts ASC
-    `);
-
-    const chunks: SnapshotChunk[] = [];
-    for (
-      const it = result.iter({id: NUM, argSetId: NUM_NULL});
-      it.valid();
-      it.next()
+  private async downloadAllSnapshots(): Promise<void> {
+    const picker = window as unknown as WindowWithSaveFilePicker;
+    if (
+      this.downloading ||
+      this.snapshots.length < 2 ||
+      picker.showDirectoryPicker === undefined
     ) {
-      if (it.argSetId === null) {
-        continue;
-      }
-
-      const args = await getArgs(this.ctx.engine, asArgSetId(it.argSetId));
-      if (
-        this.getSnapshotVmId(args) !== snapshot.vmId ||
-        this.getArgDisplayValue(args, 'snapshot_id') !== snapshot.snapshotId
-      ) {
-        continue;
-      }
-
-      chunks.push({
-        chunkIndex: this.getArgNumber(args, 'chunk_index'),
-        offset: this.getArgNumber(args, 'offset'),
-        content: this.getArgRawString(args, 'content') ?? '',
-      });
-    }
-
-    return chunks.sort((a, b) =>
-      a.chunkIndex === b.chunkIndex ?
-        a.offset - b.offset :
-        a.chunkIndex - b.chunkIndex,
-    );
-  }
-
-  private async saveSnapshotFile(
-    fileName: string,
-    content: string,
-  ): Promise<void> {
-    const windowWithSaveFilePicker = window as unknown as
-      WindowWithSaveFilePicker;
-    if (windowWithSaveFilePicker.showSaveFilePicker !== undefined) {
-      const fileHandle = await windowWithSaveFilePicker.showSaveFilePicker({
-        suggestedName: fileName,
-        types: [
-          {
-            description: 'Heap Snapshot',
-            accept: {'application/json': ['.heapsnapshot']},
-          },
-        ],
-      });
-      const writable = await fileHandle.createWritable();
-      await writable.write(content);
-      await writable.close();
       return;
     }
+    const snapshots = [...this.snapshots];
+    this.downloading = true;
+    this.downloadingAll = true;
+    this.downloadedSnapshotCount = 0;
+    m.redraw();
+    try {
+      const directory = await picker.showDirectoryPicker({mode: 'readwrite'});
+      for (const [index, snapshot] of snapshots.entries()) {
+        // Keep only one snapshot's content in memory during the export.
+        const content = await this.loadSnapshotContent(snapshot);
+        const handle = await directory.getFileHandle(
+          this.snapshotFileName(snapshot, index),
+          {create: true},
+        );
+        await this.writeSnapshotFile(handle, content);
+        this.downloadedSnapshotCount++;
+        m.redraw();
+      }
+    } catch (error) {
+      if (!this.isSaveFileCancelled(error)) {
+        window.alert(
+          `Failed to download all snapshots after saving ${this.downloadedSnapshotCount}/${snapshots.length}: ${error}`,
+        );
+      }
+    } finally {
+      this.downloading = false;
+      this.downloadingAll = false;
+      m.redraw();
+    }
+  }
 
-    downloadData(fileName, new TextEncoder().encode(content).buffer);
+  private async loadSnapshotContent(
+    snapshot: SnapshotDetails,
+  ): Promise<string> {
+    return loadSnapshotContent(this.ctx.engine, {
+      id: snapshot.vmId,
+      snapshotId: snapshot.snapshotId,
+    });
+  }
+
+  private async writeSnapshotFile(
+    fileHandle: SnapshotFileHandle,
+    content: string,
+  ): Promise<void> {
+    const writable = await fileHandle.createWritable();
+    try {
+      await writable.write(content);
+      await writable.close();
+    } catch (error) {
+      await writable.abort().catch(() => {});
+      throw error;
+    }
   }
 
   private isSaveFileCancelled(error: unknown): boolean {
     return error instanceof DOMException && error.name === 'AbortError';
   }
 
-  private renderMemoryUsage(
-    bytes: number,
-    deltaBytes?: number,
-  ): m.Child {
+  private renderMemoryUsage(bytes: number, deltaBytes?: number): m.Child {
     return m('span', [
       formatMemoryBytes(bytes),
-      deltaBytes === undefined ? null : [
-        ' ',
-        m('span', {
-          style: {
-            fontSize: '12px',
-            opacity: '0.7',
-          },
-        }, `(${formatMemoryDeltaBytes(deltaBytes)} vs previous snapshot)`),
-      ],
+      deltaBytes === undefined
+        ? null
+        : [
+            ' ',
+            m(
+              'span',
+              {
+                style: {
+                  fontSize: '12px',
+                  opacity: '0.7',
+                },
+              },
+              `(${formatMemoryDeltaBytes(deltaBytes)} vs previous snapshot)`,
+            ),
+          ],
     ]);
   }
 
   private async loadSnapshotsForVm(
     vmInstanceKey: string,
   ): Promise<SnapshotDetails[]> {
-    const result = await this.ctx.engine.query(`
+    let sliceIds: number[];
+    if (parseMemorySnapshotId(vmInstanceKey) !== undefined) {
+      sliceIds = (await loadMemorySnapshots(this.ctx.engine))
+        .filter((snapshot) => snapshot.id === vmInstanceKey)
+        .map((snapshot) => snapshot.sliceId);
+    } else {
+      const result = await this.ctx.engine.query(`
       SELECT
         id
       FROM slice
@@ -795,20 +1107,19 @@ export class MemoryVitalsDetailsPanel implements TrackEventDetailsPanel {
       ORDER BY ts ASC
     `);
 
+      sliceIds = [];
+      for (const it = result.iter({id: NUM}); it.valid(); it.next()) {
+        sliceIds.push(it.id);
+      }
+    }
     const snapshots: SnapshotDetails[] = [];
-    for (
-      const it = result.iter({id: NUM});
-      it.valid();
-      it.next()
-    ) {
-      const slice = await getSlice(this.ctx.engine, asSliceSqlId(it.id));
-      const snapshot = slice === undefined ?
-        undefined :
-        await this.parseSnapshotDetails(slice);
-      if (
-        snapshot !== undefined &&
-        snapshot.vmInstanceKey === vmInstanceKey
-      ) {
+    for (const sliceId of sliceIds) {
+      const slice = await getSlice(this.ctx.engine, asSliceSqlId(sliceId));
+      const snapshot =
+        slice === undefined
+          ? undefined
+          : await this.parseSnapshotDetails(slice);
+      if (snapshot !== undefined && snapshot.vmInstanceKey === vmInstanceKey) {
         snapshots.push(snapshot);
       }
     }
@@ -826,8 +1137,11 @@ export class MemoryVitalsDetailsPanel implements TrackEventDetailsPanel {
       return undefined;
     }
     const snapshotId = this.getArgDisplayValue(args, 'snapshot_id') ?? '';
+    const identity = parseMemorySnapshotId(vmId);
     const snapshotStartTs =
-      (await this.loadSnapshotStartTimes()).get(snapshotId) ?? slice.ts;
+      identity === undefined
+        ? (await this.loadSnapshotStartTimes()).get(snapshotId) ?? slice.ts
+        : slice.ts;
     const vmIdentity = await this.resolveSnapshotVmIdentity(
       vmId,
       snapshotStartTs,
@@ -844,6 +1158,18 @@ export class MemoryVitalsDetailsPanel implements TrackEventDetailsPanel {
       chunkSize: this.getArgNumber(args, 'chunk_size'),
       chunkCount: this.getArgNumber(args, 'chunk_count'),
       desc: this.parseSnapshotDesc(this.getArgDisplayValue(args, 'desc')),
+      identity,
+      triggerRetainedBytes: this.getOptionalArgNumber(
+        args,
+        'trigger_retained_bytes',
+      ),
+      retainedBytes: this.getOptionalArgNumber(args, 'retained_bytes'),
+      captureReason: this.getArgDisplayValue(args, 'capture_reason'),
+      postExitPageCount: this.getOptionalArgNumber(
+        args,
+        'post_exit_page_count',
+      ),
+      changePercent: this.getOptionalArgNumber(args, 'change_percent'),
     };
   }
 
@@ -858,11 +1184,12 @@ export class MemoryVitalsDetailsPanel implements TrackEventDetailsPanel {
     }
 
     const instances = await this.loadBtsVmInstances();
-    const instance = sharedBtsName !== undefined ?
-      findBtsVmByNameAt(instances, sharedBtsName, snapshotStartTs) :
-      singleBtsPageId !== undefined ?
-        findBtsVmForPage(instances, singleBtsPageId) :
-        undefined;
+    const instance =
+      sharedBtsName !== undefined
+        ? findBtsVmByNameAt(instances, sharedBtsName, snapshotStartTs)
+        : singleBtsPageId !== undefined
+          ? findBtsVmForPage(instances, singleBtsPageId)
+          : undefined;
     if (instance === undefined) {
       return {key: vmId, displayName: vmId};
     }
@@ -885,8 +1212,10 @@ export class MemoryVitalsDetailsPanel implements TrackEventDetailsPanel {
   private loadBtsVmMemoryTrackAssignments(): Promise<
     BtsVmMemoryTrackAssignment[]
   > {
-    this.btsVmMemoryTrackAssignmentsPromise ??=
-      loadBtsVmMemoryTrackAssignments(this.ctx.engine, true);
+    this.btsVmMemoryTrackAssignmentsPromise ??= loadBtsVmMemoryTrackAssignments(
+      this.ctx.engine,
+      true,
+    );
     return this.btsVmMemoryTrackAssignmentsPromise;
   }
 
@@ -911,10 +1240,7 @@ export class MemoryVitalsDetailsPanel implements TrackEventDetailsPanel {
       it.valid();
       it.next()
     ) {
-      const args = await getArgs(
-        this.ctx.engine,
-        asArgSetId(it.argSetId),
-      );
+      const args = await getArgs(this.ctx.engine, asArgSetId(it.argSetId));
       const snapshotId = this.getArgDisplayValue(args, 'snapshot_id');
       if (snapshotId !== undefined) {
         startTimes.set(snapshotId, it.ts);
@@ -968,16 +1294,6 @@ export class MemoryVitalsDetailsPanel implements TrackEventDetailsPanel {
     return JSON.stringify(value);
   }
 
-  private getArgRawString(args: ArgsDict, key: string): string | undefined {
-    const value = this.getArgValue(args, key);
-    if (value === undefined) {
-      return undefined;
-    }
-    return typeof value === 'string' ?
-      value :
-      this.getArgDisplayValue(args, key);
-  }
-
   private getArgNumber(args: ArgsDict, key: string): number {
     return Number(this.getArgDisplayValue(args, key)) || 0;
   }
@@ -1012,7 +1328,11 @@ export class MemoryVitalsDetailsPanel implements TrackEventDetailsPanel {
   private getValueByPath(args: ArgsDict, path: string): Args | undefined {
     let value: Args | undefined = args;
     for (const key of path.split('.')) {
-      if (value === null || typeof value !== 'object' || value instanceof Array) {
+      if (
+        value === null ||
+        typeof value !== 'object' ||
+        value instanceof Array
+      ) {
         return undefined;
       }
       value = value[key];
