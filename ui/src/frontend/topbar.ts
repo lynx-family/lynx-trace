@@ -30,6 +30,7 @@ import {
   renderLynxButtons,
   getScreenSize,
 } from '../components/lynx_perf/top_bar';
+import {SnapshotViewer} from '../plugins/lynx.memory/snapshot_viewer';
 
 class TraceErrorIcon implements m.ClassComponent<TraceImplAttrs> {
   private tracePopupErrorDismissed = false;
@@ -112,8 +113,9 @@ export class Topbar implements m.ClassComponent<TopbarAttrs> {
       },
       m(Omnibox, {trace}),
       sourceMapState.state.sourceMapDecodePopup?.render(),
-      renderLynxButtons(),
+      m('.pf-topbar__lynx-actions', renderLynxButtons(trace)),
       trace && m(TraceErrorIcon, {trace}),
+      trace && m(SnapshotViewer, {trace}),
     );
   }
 }

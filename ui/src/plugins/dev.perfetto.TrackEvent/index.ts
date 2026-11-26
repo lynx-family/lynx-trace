@@ -51,6 +51,10 @@ import {
 } from '../dev.perfetto.ProcessSummary/group_summary_track';
 import {formatBtsVmInstanceName} from '../../lynx_perf/common_components/memory/bts_vm_generations';
 import {loadBtsVmMemoryTrackAssignments} from '../../lynx_perf/common_components/memory/bts_vm_memory_tracks';
+import {
+  COUNTER_TRACK_DISPLAY_NAME_TAG,
+  COUNTER_TRACK_NAME_TAG,
+} from '../../lynx_perf/common_components/memory/bts_vm_slot_area_selection_tab';
 import {lynxPerfGlobals} from '../../lynx_perf/lynx_perf_globals';
 
 function createTrackEventDetailsPanel(trace: Trace) {
@@ -88,12 +92,9 @@ export default class TrackEventPlugin implements PerfettoPlugin {
       this.migrateTrackEventPluginState(init),
     );
 
-    const btsVmDisplayNameByTrackId = new Map(
+    const btsVmAssignmentsByTrackId = new Map(
       (await loadBtsVmMemoryTrackAssignments(ctx.engine, true)).map(
-        ({vm, track}) => [
-          track.id,
-          formatBtsVmInstanceName(vm.name, vm.generation),
-        ],
+        (assignment) => [assignment.track.id, assignment],
       ),
     );
     await ctx.engine.query(`include perfetto module viz.summary.track_event;`);
@@ -220,14 +221,15 @@ export default class TrackEventPlugin implements PerfettoPlugin {
         tid,
         pid,
       });
-      const btsVmDisplayName =
+      const btsVmAssignment =
         isCounter && trackIds.length === 1
-          ? btsVmDisplayNameByTrackId.get(trackIds[0])
+          ? btsVmAssignmentsByTrackId.get(trackIds[0])
           : undefined;
+      const btsVm = btsVmAssignment?.vm;
       const displayName =
-        btsVmDisplayName === undefined
+        btsVm === undefined
           ? trackName
-          : `bts_vm: ${btsVmDisplayName}`;
+          : `bts_vm: ${formatBtsVmInstanceName(btsVm.name, btsVm.generation)}`;
       const uri = `/track_event_${trackIds[0]}`;
       if (hasData && isCounter) {
         // Don't show any builtin counter.
@@ -247,6 +249,8 @@ export default class TrackEventPlugin implements PerfettoPlugin {
           tags: {
             kinds: [kind],
             trackIds: [trackIds[0]],
+            [COUNTER_TRACK_NAME_TAG]: trackName,
+            [COUNTER_TRACK_DISPLAY_NAME_TAG]: displayName,
             upid: upid ?? undefined,
             utid: utid ?? undefined,
             trackEvent: true,
@@ -263,6 +267,8 @@ export default class TrackEventPlugin implements PerfettoPlugin {
                 : `trackEvent-${parentId}-${yAxisShareKey}`,
             trackId,
             trackName,
+            vmGcTimestamps: btsVm?.gcTimestamps,
+            btsVmTrack: btsVmAssignment?.track,
           }),
         });
       } else if (hasData) {

@@ -79,9 +79,14 @@ export class CurrentSelectionTab
   }
 
   private renderTrackSelection(trace: TraceImpl, selection: TrackSelection) {
+    const customDetails = trace.tracks
+      .getTrack(selection.trackUri)
+      ?.renderer.renderTrackDetails?.();
     return {
       isLoading: false,
-      content: this.renderTrackDetailsPanel(trace, selection.trackUri),
+      content:
+        customDetails ??
+        this.renderTrackDetailsPanel(trace, selection.trackUri),
     };
   }
 

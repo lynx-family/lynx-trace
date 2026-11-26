@@ -20,12 +20,18 @@ describe('BTS VM memory details', () => {
         {
           debug: {
             annotations,
+            slot_0: '1024',
+            slot_3: '4096',
           },
         },
       ),
     ).toEqual({
       accumulateBytes: 8 * 1024 * 1024,
       rssBytes: 5 * 1024 * 1024,
+      slotBytes: {
+        0: 1024,
+        3: 4096,
+      },
       annotations,
     });
   });
@@ -38,6 +44,7 @@ describe('BTS VM memory details', () => {
     ).toEqual({
       accumulateBytes: 1024,
       rssBytes: 768,
+      slotBytes: {},
       annotations: 'raw annotation',
     });
   });
@@ -68,6 +75,7 @@ describe('BTS VM memory details', () => {
     ).toEqual({
       accumulateBytes: 0,
       rssBytes: 0,
+      slotBytes: {},
       annotations: undefined,
     });
   });

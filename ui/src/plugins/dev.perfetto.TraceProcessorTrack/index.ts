@@ -66,6 +66,11 @@ import {ThreadSliceDetailsPanel} from '../../components/details/thread_slice_det
 import {CallstackDetailsSection} from './callstack_details_section';
 import {formatBtsVmInstanceName} from '../../lynx_perf/common_components/memory/bts_vm_generations';
 import {loadBtsVmMemoryTrackAssignments} from '../../lynx_perf/common_components/memory/bts_vm_memory_tracks';
+import {
+  COUNTER_TRACK_DISPLAY_NAME_TAG,
+  COUNTER_TRACK_NAME_TAG,
+  createBtsVmSlotAreaSelectionTab,
+} from '../../lynx_perf/common_components/memory/bts_vm_slot_area_selection_tab';
 import {lynxPerfGlobals} from '../../lynx_perf/lynx_perf_globals';
 
 const TRACE_PROCESSOR_TRACK_PLUGIN_STATE_SCHEMA = z.object({
@@ -119,12 +124,9 @@ export default class TraceProcessorTrackPlugin implements PerfettoPlugin {
   }
 
   private async addCounters(ctx: Trace) {
-    const btsVmDisplayNameByTrackId = new Map(
+    const btsVmAssignmentsByTrackId = new Map(
       (await loadBtsVmMemoryTrackAssignments(ctx.engine, true)).map(
-        ({vm, track}) => [
-          track.id,
-          formatBtsVmInstanceName(vm.name, vm.generation),
-        ],
+        (assignment) => [assignment.track.id, assignment],
       ),
     );
     const result = await ctx.engine.query(`
@@ -214,11 +216,12 @@ export default class TraceProcessorTrackPlugin implements PerfettoPlugin {
         machine,
       });
       const uri = `/counter_${trackId}`;
-      const btsVmDisplayName = btsVmDisplayNameByTrackId.get(trackId);
+      const btsVmAssignment = btsVmAssignmentsByTrackId.get(trackId);
+      const btsVm = btsVmAssignment?.vm;
       const displayName =
-        btsVmDisplayName === undefined
+        btsVm === undefined
           ? trackName
-          : `bts_vm: ${btsVmDisplayName}`;
+          : `bts_vm: ${formatBtsVmInstanceName(btsVm.name, btsVm.generation)}`;
 
       const maybeDescriptionRenderer = schema.description?.({
         name: trackName ?? undefined,
@@ -236,6 +239,8 @@ export default class TraceProcessorTrackPlugin implements PerfettoPlugin {
         tags: {
           kinds: [COUNTER_TRACK_KIND],
           trackIds: [trackId],
+          [COUNTER_TRACK_NAME_TAG]: trackName,
+          [COUNTER_TRACK_DISPLAY_NAME_TAG]: displayName,
           type: type,
           upid: upid ?? undefined,
           utid: utid ?? undefined,
@@ -249,6 +254,8 @@ export default class TraceProcessorTrackPlugin implements PerfettoPlugin {
           unit: schema.unit ?? unit ?? undefined,
           trackId,
           trackName,
+          vmGcTimestamps: btsVm?.gcTimestamps,
+          btsVmTrack: btsVmAssignment?.track,
         }),
       });
       this.addTrack(
@@ -538,6 +545,9 @@ export default class TraceProcessorTrackPlugin implements PerfettoPlugin {
   }
 
   private addAggregations(ctx: Trace) {
+    ctx.selection.registerAreaSelectionTab(
+      createBtsVmSlotAreaSelectionTab(ctx),
+    );
     ctx.selection.registerAreaSelectionTab(
       createAggregationTab(ctx, new CounterSelectionAggregator()),
     );

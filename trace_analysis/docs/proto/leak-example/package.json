@@ -1,0 +1,32 @@
+{
+  "name": "rspeedy-cli-app",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "DEBUG=rspeedy rspeedy build",
+    "check": "biome check --write",
+    "dev": "rspeedy dev",
+    "format": "prettier --write .",
+    "preview": "rspeedy preview",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@byted-lynx/react": "^0.109.3"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.4",
+    "@byted-lynx/hdt-rsbuild-plugin": "^0.3.6",
+    "@byted-lynx/rspeedy": "^0.9.9",
+    "@byted-lynx/type-lynx": "^3.3.0",
+    "@testing-library/jest-dom": "^6.6.3",
+    "@types/react": "^18.3.23",
+    "jsdom": "^26.1.0",
+    "prettier": "^3.5.3",
+    "typescript": "~5.8.3",
+    "vitest": "^3.2.2"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

@@ -131,3 +131,7 @@ dist
 .yarn/build-state.yml
 .yarn/install-state.gz
 .pnp.*
+
+# Keep the leak example's build artifacts for reproducible source mapping.
+!/docs/proto/leak-example/dist/
+/docs/proto/leak-example/dist/stats.json

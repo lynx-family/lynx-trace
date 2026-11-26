@@ -25,6 +25,8 @@ interface TraceProcessorShellConfig {
 const binaryCache: Map<string, string> = new Map();
 
 export class TraceQuery {
+  /** Actual local file loaded by the processor, including downloaded traces. */
+  sourceTracePath?: string;
   private traceProcessor: TraceProcessor | undefined;
 
   private traceFileCache: Map<string, string> = new Map();
@@ -62,6 +64,7 @@ export class TraceQuery {
       }
 
       this.traceProcessor = await TraceProcessor.create(traceFile, undefined, config);
+      this.sourceTracePath = path.resolve(traceFile);
     } catch (error) {
       console.error('Error initializing TraceProcessor:', error);
       throw error;

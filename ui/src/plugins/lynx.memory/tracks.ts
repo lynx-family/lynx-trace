@@ -30,28 +30,17 @@ import {BaseSlice} from '../../lynx_perf/types';
 import {TrackEventDetailsPanel} from '../../public/details_panel';
 import {TrackEventSelection} from '../../public/selection';
 import {TrackMouseEvent, TrackRenderContext} from '../../public/track';
-import {NUM, STR, STR_NULL} from '../../trace_processor/query_result';
 import {Button} from '../../widgets/button';
 import {Icons} from '../../base/semantic_icons';
 import {MemoryVitalsDetailsPanel} from './details';
-import {
-  BTS_RUNTIME_DESTROY,
-  DESTROY_VM_INSTANCE,
-  PAGE_USES_BTS_VM,
-} from '../../lynx_perf/common_components/memory/bts_vm_generations';
 import {lynxPerfGlobals} from '../../lynx_perf/lynx_perf_globals';
+import {
+  formatMemoryVitalEventName,
+  isPageLifetimeEvent,
+  loadMemoryVitalEvents,
+} from '../../lynx_perf/common_components/memory/memory_vital_events';
 
-export const MEMORY_VITAL_EVENT_NAMES = [
-  'LynxShell::Create',
-  'LynxShell::~LynxShell',
-  PAGE_USES_BTS_VM,
-  BTS_RUNTIME_DESTROY,
-  'LynxEnv.trimMemory',
-  'RunGC',
-  DESTROY_VM_INSTANCE,
-  'capture_snapshot',
-  'TRACE_END',
-];
+export {MEMORY_VITAL_EVENT_NAMES} from '../../lynx_perf/common_components/memory/memory_vital_events';
 
 const DEFAULT_MARKER_Y_MULTIPLIER = 0.5;
 const LOWER_LAYER_MARKER_Y_MULTIPLIER = 1.6;
@@ -63,16 +52,8 @@ interface MemoryVitalEvent extends BaseSlice {
   name: string;
   trackId: number;
   instanceId?: number;
-  snapshotVmId?: string;
+  btsVmName?: string;
   widthPx?: number;
-}
-
-function parseOptionalNumber(value: string | null): number | undefined {
-  if (value === null) {
-    return undefined;
-  }
-  const numberValue = Number(value);
-  return Number.isFinite(numberValue) ? numberValue : undefined;
 }
 
 export class MemoryVitalsTrack extends LynxBaseTrack<MemoryVitalEvent[]> {
@@ -94,57 +75,13 @@ export class MemoryVitalsTrack extends LynxBaseTrack<MemoryVitalEvent[]> {
     _end: time,
     _resolution: duration,
   ): Promise<MemoryVitalEvent[]> {
-    const eventNames = MEMORY_VITAL_EVENT_NAMES.map((name) => `'${name}'`).join(
-      ',',
+    return (await loadMemoryVitalEvents(this.trace.engine)).map(
+      ({sliceId, ts, ...event}) => ({
+        ...event,
+        id: sliceId,
+        ts: Number(ts),
+      }),
     );
-    const result = await this.trace.engine.query(`
-      SELECT
-        ts,
-        id,
-        name,
-        track_id AS trackId,
-        (
-          SELECT display_value
-          FROM args
-          WHERE arg_set_id = slice.arg_set_id
-            AND flat_key IN ('id', 'debug.id')
-          LIMIT 1
-        ) AS snapshotVmId,
-        (
-          SELECT display_value
-          FROM args
-          WHERE arg_set_id = slice.arg_set_id
-            AND flat_key IN ('instance_id', 'debug.instance_id', 'args.instance_id')
-          LIMIT 1
-        ) AS instanceId
-      FROM slice
-      WHERE name IN (${eventNames})
-      ORDER BY ts ASC
-    `);
-
-    const events: MemoryVitalEvent[] = [];
-    for (
-      const it = result.iter({
-        ts: NUM,
-        id: NUM,
-        name: STR,
-        trackId: NUM,
-        snapshotVmId: STR_NULL,
-        instanceId: STR_NULL,
-      });
-      it.valid();
-      it.next()
-    ) {
-      events.push({
-        ts: it.ts,
-        id: it.id,
-        name: it.name,
-        trackId: it.trackId,
-        instanceId: parseOptionalNumber(it.instanceId),
-        snapshotVmId: it.snapshotVmId ?? undefined,
-      });
-    }
-    return events;
   }
 
   render(ctx: TrackRenderContext): void {
@@ -262,34 +199,11 @@ export class MemoryVitalsTrack extends LynxBaseTrack<MemoryVitalEvent[]> {
   }
 
   private getMarkerName(marker: MemoryVitalEvent): string {
-    if (marker.name !== 'capture_snapshot') {
-      return marker.name;
-    }
-
-    return marker.snapshotVmId?.includes('(mts)')
-      ? 'MTS Snapshot'
-      : 'BTS Snapshot';
-  }
-
-  private isSnapshotMarker(marker: MemoryVitalEvent): boolean {
-    return marker.name === 'capture_snapshot';
+    return formatMemoryVitalEventName(marker);
   }
 
   private isLowerLayerMarker(marker: MemoryVitalEvent): boolean {
-    return (
-      this.isSnapshotMarker(marker) ||
-      marker.name === 'RunGC' ||
-      marker.name === 'LynxEnv.trimMemory'
-    );
-  }
-
-  private isPageLifetimeMarker(marker: MemoryVitalEvent): boolean {
-    return (
-      marker.name === 'LynxShell::Create' ||
-      marker.name === 'LynxShell::~LynxShell' ||
-      marker.name === PAGE_USES_BTS_VM ||
-      marker.name === BTS_RUNTIME_DESTROY
-    );
+    return marker.name === 'LynxEnv.trimMemory';
   }
 
   private getVisibleEvents(data: MemoryVitalEvent[]): MemoryVitalEvent[] {
@@ -298,7 +212,7 @@ export class MemoryVitalsTrack extends LynxBaseTrack<MemoryVitalEvent[]> {
     }
 
     return data.filter((event) => {
-      if (!this.isPageLifetimeMarker(event)) {
+      if (!isPageLifetimeEvent(event.name)) {
         return true;
       }
       return (

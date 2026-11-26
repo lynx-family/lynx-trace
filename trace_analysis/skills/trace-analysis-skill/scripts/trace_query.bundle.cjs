@@ -43,6 +43,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+const fs = __importStar(__webpack_require__(9896));
 const os = __importStar(__webpack_require__(857));
 const path = __importStar(__webpack_require__(6928));
 const commander_1 = __webpack_require__(3045);
@@ -63,7 +64,11 @@ const query_pipeline_ids_1 = __webpack_require__(7100);
 const query_pipeline_overview_events_1 = __webpack_require__(9263);
 const query_threads_1 = __webpack_require__(6778);
 const query_trace_metadata_1 = __webpack_require__(2220);
-const memory_analysis_report_1 = __webpack_require__(6422);
+const frontend_sources_1 = __webpack_require__(8078);
+const lynx_source_selection_1 = __webpack_require__(8801);
+const memory_analysis_artifacts_1 = __webpack_require__(7021);
+const memory_residual_analysis_1 = __webpack_require__(6377);
+const source_preparation_1 = __webpack_require__(552);
 const convert_trace_event_style_1 = __webpack_require__(9969);
 const trace_query_1 = __webpack_require__(2219);
 function tryRequireHooks() {
@@ -147,6 +152,88 @@ function wrapCommandAction(commandName, action) {
 async function main() {
     const program = new commander_1.Command();
     program.version('0.0.1').description('Trace Query CLI Tool');
+    program.option('--frontend-manifest <path>', 'Prepared frontend artifact manifest; required when frontend projects were supplied');
+    program.option('--lynx-manifest <path>', 'Prepared Lynx runtime build manifest with verified revision provenance');
+    program.option('--source-preparation <path>', 'Source preparation and explicit user-decision ledger (version 1)');
+    let frontend;
+    let lynx;
+    let sourcePreparation;
+    program.hook('preAction', (_command, action) => {
+        const manifest = program.opts()['frontendManifest'];
+        if (manifest && !action.name().startsWith('frontend-') && action.name() !== 'lynx-source-version') {
+            // This runs before hooks, Trace downloads or processor initialization.
+            frontend = (0, frontend_sources_1.readFrontend)(manifest);
+        }
+        const runtime = program.opts()['lynxManifest'];
+        if (runtime && !action.name().startsWith('frontend-') && action.name() !== 'lynx-source-version') {
+            lynx = (0, frontend_sources_1.readLynxSources)(runtime);
+        }
+        if (['memory-analysis', 'memory-snapshot', 'memory-report'].includes(action.name())) {
+            const ledger = program.opts()['sourcePreparation'];
+            if (ledger)
+                sourcePreparation = JSON.parse(fs.readFileSync(ledger, 'utf8'));
+            if (action.name() !== 'memory-report') {
+                // Fail before hooks, downloads, Trace queries, extraction or report side effects.
+                sourcePreparation = (0, source_preparation_1.checkSourcePreparation)(sourcePreparation, 'analysis', { frontend, lynx });
+            }
+        }
+    });
+    program
+        .command('lynx-source-version')
+        .description('Select an explicit Lynx revision or inspect recorded versions before memory analysis')
+        .option('-p, --path <path>', 'Trace path, used only when no explicit Lynx revision is supplied')
+        .option('--lynx-version <version>', 'User-selected Lynx version; A_<version> is an internal tag hint to verify')
+        .option('--lynx-version-ref <ref>', 'Verified version tag/ref in the selected internal or OSS repository')
+        .option('--lynx-commit <commit>', 'User-selected Lynx commit')
+        .option('--lynx-branch <branch>', 'User-selected Lynx branch')
+        .option('-o, --output <path>', 'Optional version-selection JSON')
+        .action(async (options) => {
+        const selection = (0, lynx_source_selection_1.requestedLynxSource)(options);
+        const candidates = selection
+            ? undefined
+            : await withTraceQuery(requireOption(options.path, 'path'), lynx_source_selection_1.queryLynxEngineVersions);
+        const result = {
+            repositories: lynx_source_selection_1.LYNX_SOURCE_REPOSITORIES,
+            repositorySelection: 'Preserve an explicit URL/local path. Otherwise query Git remotes without asking the user: probe internal with git ls-remote <url> HEAD; accessible internal always selects internal. Only if internal is inaccessible, probe OSS. Record probe results and verify the requested revision in the selected repository; a missing internal ref never permits OSS fallback. This command does not run Git probes.',
+            versionRefGuidance: 'For an explicit user version or an eligible Trace candidate, form A_<version> and query the exact tag plus its peeled ref in the selected remote. Trace versions below 4.5.0 are invalid even if their tags exist: treat them as missing tags and request source/revision input. Verify any different OSS version-to-tag mapping from remote evidence. ls-remote does not enumerate every commit: verify a supplied commit with a depth-one fetch into a new empty checkout and rev-parse FETCH_HEAD^{commit}. Record the full commit and logs; do not inspect local repositories or caches.',
+            ...(selection
+                ? { source: 'user', selection, requiresConsent: false }
+                : {
+                    source: 'trace',
+                    minimumTraceVersion: lynx_source_selection_1.MINIMUM_TRACE_LYNX_VERSION,
+                    candidates,
+                    requiresConsent: false,
+                    nextStep: candidates?.some((candidate) => candidate.status === 'candidate')
+                        ? 'Only status=candidate versions may proceed to remote tag verification and automatic builds. Resolve versions for the requested process/page scope; never substitute a valid version for another scope with invalid metadata. Invalid versions follow missing-tag recovery even if their tags exist. Ask for source/revision when no unique usable tag can be resolved; validate JS/maps against snapshots later.'
+                        : 'No eligible Trace version. Treat invalid or below-minimum versions as missing tags even if the remote tags exist; memory analysis support starts at Lynx 4.5.0. Ask for Lynx source/revision input and keep preparation pending until usable input or an explicit opt-out/abort is received.',
+                }),
+        };
+        if (options.output) {
+            fs.mkdirSync(path.dirname(path.resolve(options.output)), { recursive: true });
+            fs.writeFileSync(options.output, JSON.stringify(result, null, 2));
+        }
+        console.log(JSON.stringify(result, null, 2));
+    });
+    program
+        .command('frontend-prepare')
+        .description('Validate frontend or runtime outputs and write a manifest ready for analysis')
+        .requiredOption('--config <path>', 'Frontend projects JSON (version 1)')
+        .requiredOption('-o, --output <path>', 'Prepared manifest JSON')
+        .action((options) => {
+        const manifest = (0, frontend_sources_1.prepareFrontend)(JSON.parse(fs.readFileSync(options.config, 'utf8')), path.dirname(path.resolve(options.config)));
+        fs.mkdirSync(path.dirname(path.resolve(options.output)), { recursive: true });
+        fs.writeFileSync(options.output, JSON.stringify(manifest, null, 2));
+        console.log(JSON.stringify(manifest, null, 2));
+    });
+    program
+        .command('frontend-confirm')
+        .description('Optionally record an explicit artifact approval for compatibility; not required for analysis')
+        .requiredOption('--manifest <path>', 'Prepared manifest JSON')
+        .requiredOption('--digest <sha256>', 'Digest of the artifact list shown to the user')
+        .requiredOption('--statement <text>', 'The user statement approving the artifact paths')
+        .action((options) => {
+        console.log(JSON.stringify((0, frontend_sources_1.confirmFrontend)(options.manifest, options.digest, options.statement), null, 2));
+    });
     program
         .command('id')
         .description('Execute trace query by slice ID')
@@ -325,14 +412,16 @@ async function main() {
     }));
     program
         .command('memory-analysis')
-        .description('Analyze Lynx memory data and generate a self-contained HTML report')
+        .description('Analyze Lynx memory and generate a portable report directory with the source Trace')
         .option('-p, --path <path>', 'Trace file path (can be URL or local file)')
         .option('--url <url>', 'Only select pages whose URL contains this value')
         .option('--instance-id <id>', 'Only select this Lynx page instance ID')
         .option('--scenario <scenario>', 'Analysis scenario: default or scroll', 'default')
         .option('-s, --start <start>', 'Scroll scenario start timestamp in ms')
         .option('-e, --end <end>', 'Scroll scenario end timestamp in ms')
-        .option('-o, --output <output>', 'HTML report output path', 'memory-analysis-report.html')
+        .option('-o, --output <output>', 'Report directory (or explicit HTML entry path)', 'memory-analysis-report')
+        .option('--output-data <path>', 'Additional copy of the full analysis JSON')
+        .option('--residual-dir <path>', 'Directory for all residual snapshots')
         .action(wrapCommandAction('memory-analysis', async (options, tq) => {
         requireOption(options.path, 'path');
         const scenario = options.scenario === 'scroll' ? 'scroll' : 'default';
@@ -343,11 +432,25 @@ async function main() {
             startTsMs: parseNumber(options.start),
             endTsMs: parseNumber(options.end),
         });
-        const reportPath = (0, memory_analysis_report_1.generateMemoryAnalysisReport)(result, path.resolve(options.output || 'memory-analysis-report.html'));
+        result.sourcePreparation = sourcePreparation;
+        const output = path.resolve(options.output || 'memory-analysis-report');
+        const directory = (0, memory_analysis_artifacts_1.memoryReportPaths)(output).directory;
+        await (0, memory_residual_analysis_1.prepareMemoryResidualAnalysis)(tq, result, options.residualDir || path.join(directory, 'snapshots'));
+        const { reportPath, dataPath } = await (0, memory_analysis_artifacts_1.generateMemoryAnalysisArtifacts)(result, output, {
+            tracePath: tq.sourceTracePath,
+            traceQuery: tq,
+            frontend,
+            lynx,
+        });
+        if (options.outputData) {
+            (0, memory_analysis_artifacts_1.writeMemoryAnalysisData)(result, options.outputData, directory);
+        }
         console.log('Memory analysis:', JSON.stringify({
             valid: result.valid,
             error: result.error,
             reportPath,
+            directory,
+            dataPath,
             summary: result.summary,
             warnings: result.warnings,
             issues: result.issues,
@@ -359,13 +462,18 @@ async function main() {
                 mtsVmType: page.mtsVmType,
                 btsVmType: page.btsVmType,
                 btsVmName: page.btsVmName,
+                btsSlot: page.btsSlot,
                 sharedBts: page.sharedBts,
+                mtsPool: page.analysis.mtsPool,
+                residualAnalysisId: page.analysis.residualAnalysisId,
             })),
+            mtsPoolGrowthEvents: result.mtsPoolGrowthEvents,
+            residualAnalyses: result.residualAnalyses,
             snapshots: result.snapshots.map((snapshot) => ({
                 vmId: snapshot.vmId,
                 index: snapshot.index,
                 snapshotId: snapshot.snapshotId,
-                willTsMs: snapshot.willTsMs,
+                captureTsMs: snapshot.captureTsMs,
             })),
             sharedBtsVmAnalyses: result.sharedBtsVmAnalyses.map((analysis) => ({
                 vmId: analysis.vmId,
@@ -376,9 +484,50 @@ async function main() {
                 notDestroyedIssue: analysis.notDestroyedIssue,
                 gcAccumulateTrend: analysis.gcAccumulateTrend,
             })),
-            analysableLeakEvents: result.analysableLeakEvents,
         }, null, 2));
     }));
+    program
+        .command('memory-report')
+        .description('Import finalized residual findings and rerender a memory report offline')
+        .requiredOption('--data <path>', 'Full memory-analysis JSON')
+        .option('--residual-results <path>', 'Versioned per-page analyzer result manifest')
+        .requiredOption('-o, --output <path>', 'Report directory (or explicit HTML entry path)')
+        .option('-p, --path <path>', 'Source Trace for legacy analysis JSON without a bundled Trace')
+        .option('--output-data <path>', 'Updated full JSON output')
+        .action(async (options) => {
+        const result = JSON.parse(fs.readFileSync(requireOption(options.data, 'data'), 'utf8'));
+        if (result.schemaVersion !== 4)
+            throw new Error('Expected memory analysis schemaVersion 4');
+        sourcePreparation = (0, source_preparation_1.checkSourcePreparation)(sourcePreparation || result.sourcePreparation, 'report', { frontend, lynx }, result);
+        (0, source_preparation_1.discardOptedOutSources)(result, sourcePreparation);
+        result.sourcePreparation = sourcePreparation;
+        if (!result.artifacts && options.path) {
+            await withTraceQuery(options.path, async (tq) => {
+                const [bounds] = await tq.query('SELECT start_ts, end_ts FROM trace_bounds');
+                if (!bounds ||
+                    Math.abs(Number(bounds['start_ts']) / 1e6 - result.trace.startTsMs) > 0.0001 ||
+                    Math.abs(Number(bounds['end_ts']) / 1e6 - result.trace.endTsMs) > 0.0001) {
+                    throw new Error('Source Trace bounds do not match the legacy analysis.');
+                }
+                options.path = tq.sourceTracePath;
+            });
+        }
+        if (options.residualResults) {
+            const file = path.resolve(options.residualResults);
+            (0, memory_residual_analysis_1.applyMemoryResidualResults)(result, JSON.parse(fs.readFileSync(file, 'utf8')), path.dirname(file));
+        }
+        const { reportPath, dataPath, directory } = await (0, memory_analysis_artifacts_1.generateMemoryAnalysisArtifacts)(result, requireOption(options.output, 'output'), {
+            tracePath: options.path,
+            baseDirectory: path.dirname(path.resolve(options.data)),
+            residualResultsPath: options.residualResults,
+            frontend,
+            lynx,
+        });
+        if (options.outputData) {
+            (0, memory_analysis_artifacts_1.writeMemoryAnalysisData)(result, options.outputData, directory);
+        }
+        console.log(JSON.stringify({ directory, reportPath, dataPath, summary: result.summary }, null, 2));
+    });
     program
         .command('memory-snapshot')
         .description('Extract a JS heap snapshot embedded in a trace')
@@ -393,13 +542,448 @@ async function main() {
         const result = await (0, query_memory_snapshot_1.extractMemorySnapshot)(tq, snapshotId, output);
         console.log('Memory snapshot:', JSON.stringify(result, null, 2));
     }));
-    program.parse(process.argv);
+    await program.parseAsync(process.argv);
 }
 main().catch((error) => {
     console.error('Error:', error);
     process.exit(1);
 });
 //# sourceMappingURL=index.js.map
+
+/***/ },
+
+/***/ 2821
+(__unused_webpack_module, exports) {
+
+
+// Copyright 2026 The Lynx Authors. All rights reserved.
+// Licensed under the Apache License Version 2.0 that can be found in the
+// LICENSE file in the root directory of this source tree.
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.parseGraphicComponent = parseGraphicComponent;
+exports.alignGraphicSeries = alignGraphicSeries;
+exports.createPageGraphicCharts = createPageGraphicCharts;
+exports.queryKryptonCharts = queryKryptonCharts;
+function parseGraphicComponent(json, key) {
+    const raw = JSON.parse(json);
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw))
+        return undefined;
+    const category = typeof raw['category'] === 'string'
+        ? raw['category']
+        : raw['category'] === undefined
+            ? key.replace(/^debug\./, '')
+            : '';
+    if (!/canvas|animax/i.test(category))
+        return undefined;
+    const detail = raw['detail'] && typeof raw['detail'] === 'object' && !Array.isArray(raw['detail'])
+        ? raw['detail']
+        : {};
+    return {
+        category,
+        sizeBytes: raw['sizeBytes'],
+        detail,
+        appId: String(detail['krypton.app_id'] ?? raw['canvasAppId'] ?? 'page'),
+    };
+}
+function measurement(value) {
+    if (typeof value !== 'number' && (typeof value !== 'string' || !/^\d+(?:\.0+)?$/.test(value)))
+        return undefined;
+    const number = Number(value);
+    return Number.isSafeInteger(number) && number >= 0 ? number : undefined;
+}
+function point(tsMs, counterId, rawValues) {
+    const values = rawValues.map(measurement);
+    const first = values[0];
+    const unavailable = values.length === 0
+        ? 'missing'
+        : values.some((v) => v === undefined)
+            ? 'invalid or missing'
+            : values.some((v) => v !== first)
+                ? 'conflicting duplicate reports'
+                : undefined;
+    return { tsMs, sourceTsMs: tsMs, counterId, value: unavailable ? 0 : first, unavailable, rawValues };
+}
+const resources = {
+    canvas_element: { zh: 'Canvas 元素', en: 'Canvas elements' },
+    image_element: { zh: '图像元素', en: 'Image elements' },
+    external_data: { zh: '外部数据', en: 'External data' },
+    webgl_texture: { zh: 'WebGL 纹理', en: 'WebGL textures' },
+    webgl_buffer: { zh: 'WebGL 缓冲区', en: 'WebGL buffers' },
+    webgl_renderbuffer: { zh: 'WebGL 渲染缓冲区', en: 'WebGL renderbuffers' },
+    webgl_generic: { zh: 'WebGL 对象', en: 'WebGL objects' },
+    gl_surface: { zh: 'GL 表面', en: 'GL surfaces' },
+    audio: { zh: '音频', en: 'Audio' },
+    audio_buffer: { zh: '音频缓冲区', en: 'Audio buffers' },
+    audio_sampler: { zh: '音频采样器', en: 'Audio samplers' },
+    audio_node: { zh: '音频节点', en: 'Audio nodes' },
+    video_element: { zh: '视频元素', en: 'Video elements' },
+    video_context: { zh: '视频上下文', en: 'Video contexts' },
+    total: { zh: '对象总数', en: 'Total objects' },
+};
+const globalResources = {
+    Canvas: 'canvas_element',
+    Image: 'image_element',
+    ExternalData: 'external_data',
+    WebGLTexture: 'webgl_texture',
+    WebGLBuffer: 'webgl_buffer',
+    WebGLRenderbuffer: 'webgl_renderbuffer',
+    WebGLObject: 'webgl_generic',
+    TotalSurface: 'gl_surface',
+    TotalObj: 'total',
+};
+function label(name) {
+    const resource = name.startsWith('krypton.')
+        ? name.split('.')[1]
+        : globalResources[name.replace(/^Krypton|Mem$|Cnt$/g, '')];
+    const text = resources[resource ?? ''];
+    return text ? { zh: `${text.zh} · ${name}`, en: `${text.en} · ${name}` } : undefined;
+}
+function colorKey(name) {
+    return name.startsWith('krypton.')
+        ? name.split('.')[1]
+        : (globalResources[name.replace(/^Krypton|Mem$|Cnt$/g, '')] ?? name);
+}
+function summarizeMemory(chart, traceStartMs) {
+    const areas = chart.series.filter((series) => (series.renderMode ?? chart.renderMode) === 'stacked-area');
+    const times = areas[0]?.points.map((p) => p.tsMs) ?? [];
+    let peak = -1;
+    let peakTs = 0;
+    let last = 0;
+    let reportTs = Number.NEGATIVE_INFINITY;
+    let partial = false;
+    for (let i = 0; i < times.length; i += 1) {
+        const points = areas.map((s) => s.points[i]).filter((p) => !!p && !p.unavailable);
+        if (!points.length)
+            continue;
+        const sum = points.reduce((total, p) => total + p.value, 0);
+        if (sum > peak) {
+            peak = sum;
+            peakTs = times[i];
+            partial = points.length !== areas.length || points.some((p) => p.partial);
+        }
+        last = sum;
+        reportTs = Math.max(reportTs, ...points.flatMap((p) => (p.sourceTsMs === undefined ? [] : [p.sourceTsMs])));
+    }
+    if (peak < 0)
+        return;
+    chart.graphics.notes.unshift({
+        zh: `已知分量合计峰值 ${(peak / 1048576).toFixed(2)} MiB（${peak.toLocaleString('en-US')} B），t=${((peakTs - traceStartMs) / 1000).toFixed(3)}s${partial ? '，此时分量覆盖不完整' : ''}；观察末尾保持值 ${(last / 1048576).toFixed(2)} MiB，最近来源上报 ${Number.isFinite(reportTs) ? `t=${((reportTs - traceStartMs) / 1000).toFixed(3)}s` : '未知'}。`,
+        en: `Known-part peak ${(peak / 1048576).toFixed(2)} MiB (${peak.toLocaleString('en-US')} B) at t=${((peakTs - traceStartMs) / 1000).toFixed(3)}s${partial ? ', with partial coverage' : ''}; held value at observation end ${(last / 1048576).toFixed(2)} MiB, latest source report ${Number.isFinite(reportTs) ? `t=${((reportTs - traceStartMs) / 1000).toFixed(3)}s` : 'unknown'}.`,
+    });
+}
+const estimateNote = {
+    zh: '资源统计/估算不可与 PSS 或 VM 内存相加，也不能单独证明泄漏。首报前及缺失字段为未知；有效值保持至下次上报或观察结束。占比基于全部已知分量，不随图例隐藏而变化。',
+    en: 'Resource statistics/estimates are not additive to PSS or VM memory and do not alone establish leaks. Values are unknown before first reporting and at missing fields; valid values are held until the next report or observation end. Percentages use all known parts regardless of hidden legends.',
+};
+/** Align each independent stream by LOCF; never borrow a future observation. */
+function alignGraphicSeries(series, endTsMs) {
+    const times = [...new Set([...series.flatMap((s) => s.points.map((p) => p.tsMs)), endTsMs])].sort((a, b) => a - b);
+    return series.map((s) => {
+        let index = -1;
+        return {
+            ...s,
+            points: times.map((tsMs) => {
+                while (index + 1 < s.points.length && s.points[index + 1].tsMs <= tsMs)
+                    index += 1;
+                const previous = s.points[index];
+                return previous ? { ...previous, tsMs } : { tsMs, value: 0, unavailable: 'not yet reported' };
+            }),
+        };
+    });
+}
+function createPageGraphicCharts(page, rawSamples, traceEndMs, traceStartMs = 0) {
+    const start = page.realCreateTsMs;
+    const end = Math.min(page.shellDestroyTsMs ?? traceEndMs, traceEndMs);
+    const samples = rawSamples.filter((s) => s.tsMs >= start && s.tsMs <= end);
+    const components = samples.flatMap((s) => s.graphics);
+    if (!components.length)
+        return;
+    const canvas = components.filter((c) => /canvas/i.test(c.category));
+    const keys = [...new Set(canvas.flatMap((c) => Object.keys(c.detail)))].sort();
+    const animax = [...new Set(components.filter((c) => !/canvas/i.test(c.category)).map((c) => c.category))].sort();
+    const notes = [estimateNote];
+    if (canvas.length)
+        notes.push({
+            zh: 'Canvas 同一页面/App 的明细按资源键去重；不使用按组件重复累加的 sizeBytes，也不乘除 instanceCount。App estimated_bytes 仅作对照，不叠加。',
+            en: 'Canvas detail is deduplicated per page/App and resource key. Aggregated sizeBytes and instanceCount are not used. App estimated_bytes is a comparison only, outside the stack.',
+        });
+    if (animax.length)
+        notes.push({
+            zh: 'AnimaX sizeBytes 已汇总各 Player，仅计一次。其值包含资源估算与固定开销，Player 缓存估算；已核实实现仅在渲染缩放变化时重算，初始零可能尚未估算。',
+            en: 'AnimaX sizeBytes already sums Players and is counted once. It includes resource estimates and fixed overhead. Players cache estimates; the verified implementation recomputes on rendering scale changes. Initial zero may mean not yet estimated.',
+        });
+    notes.push({
+        zh: '页面 counter 可重复携带缓存字段，时间表示上报时刻，不保证重新测量。退出 memory=0 且无明细是 reporter 清理，不能视作资源释放；单次有效上报只显示观察值，不判断趋势。',
+        en: 'Page counters may repeat cached fields; timestamps are report times, not necessarily fresh measurements. Exit memory=0 without detail clears the reporter and does not measure resource release. A single observation does not establish a trend.',
+    });
+    const usable = samples.filter((s) => s.totalBytes !== 0 || s.graphics.length > 0);
+    const appIds = [...new Set(canvas.map((c) => c.appId))];
+    const makeSeries = (name, unit, isAnimax = false) => ({
+        name,
+        label: isAnimax ? undefined : label(name),
+        colorKey: colorKey(name),
+        unit,
+        points: usable.map((s) => {
+            if (isAnimax)
+                return point(s.tsMs, s.id, s.graphics.filter((c) => c.category === name).map((c) => c.sizeBytes));
+            const apps = appIds.map((appId) => point(s.tsMs, s.id, s.graphics
+                .filter((c) => /canvas/i.test(c.category) && c.appId === appId && Object.prototype.hasOwnProperty.call(c.detail, name))
+                .map((c) => c.detail[name])));
+            const missing = apps.find((p) => p.unavailable);
+            return {
+                tsMs: s.tsMs,
+                sourceTsMs: s.tsMs,
+                counterId: s.id,
+                value: missing ? 0 : apps.reduce((sum, p) => sum + p.value, 0),
+                unavailable: missing?.unavailable,
+                rawValues: apps.flatMap((p) => p.rawValues ?? []),
+            };
+        }),
+    });
+    const bytes = keys.filter((k) => k.startsWith('krypton.') && k.endsWith('.bytes')).map((k) => makeSeries(k, 'bytes'));
+    bytes.push(...animax.map((k) => makeSeries(k, 'bytes', true)));
+    const comparisons = keys.includes('krypton.total.estimated_bytes')
+        ? [makeSeries('krypton.total.estimated_bytes', 'bytes')]
+        : [];
+    page.analysis.graphicMemoryChart = {
+        id: `page_${page.instanceId}_graphics`,
+        title: 'Graphic Component Memory Usage',
+        xStartTsMs: start,
+        xEndTsMs: end,
+        zeroBaseline: true,
+        renderMode: 'stacked-area',
+        series: alignGraphicSeries(bytes, end),
+        graphics: { notes, comparisons: alignGraphicSeries(comparisons, end) },
+    };
+    summarizeMemory(page.analysis.graphicMemoryChart, traceStartMs);
+    if (canvas.length)
+        page.analysis.canvasResourceChart = {
+            id: `page_${page.instanceId}_canvas_counts`,
+            title: 'Canvas Graphics Resource Counts',
+            xStartTsMs: start,
+            xEndTsMs: end,
+            zeroBaseline: true,
+            series: alignGraphicSeries(keys
+                .filter((k) => k.startsWith('krypton.') && (k.endsWith('.count') || k === 'krypton.total.object_count'))
+                .map((k) => makeSeries(k, 'count')), end),
+            graphics: {
+                notes: [
+                    estimateNote,
+                    {
+                        zh: '资源 count 与组件 instanceCount 不同。对象总数、WebGL 总类和子类存在包含关系，不能堆叠或求和。',
+                        en: 'Resource counts differ from UI instanceCount. Total objects, WebGL generic objects and subtypes overlap; they must not be stacked or summed.',
+                    },
+                ],
+            },
+        };
+}
+function isAnimaxSeries(series) {
+    return /animax/i.test(series.name) && !series.name.startsWith('krypton.');
+}
+/** Sum each category across active pages; page exit removes its contribution, not a measured release. */
+function aggregateAnimaxSeries(pages, start, end) {
+    const categories = new Set(pages.flatMap((page) => (page.analysis.graphicMemoryChart?.series ?? []).filter(isAnimaxSeries).map((series) => series.name)));
+    return [...categories].sort().map((name) => {
+        const inputs = pages.flatMap((page) => {
+            const series = page.analysis.graphicMemoryChart?.series.find((s) => s.name === name);
+            return series
+                ? [
+                    {
+                        page,
+                        series,
+                        index: -1,
+                        start: Math.max(start, page.createTsMs ?? start),
+                        end: Math.min(end, page.shellDestroyTsMs ?? end),
+                    },
+                ]
+                : [];
+        });
+        const times = [
+            ...new Set([
+                start,
+                end,
+                ...inputs.flatMap((input) => [input.start, input.end, ...input.series.points.map((p) => p.tsMs)]),
+            ]),
+        ]
+            .filter((ts) => ts >= start && ts <= end)
+            .sort((a, b) => a - b);
+        return {
+            name,
+            colorKey: name,
+            unit: 'bytes',
+            points: times.map((tsMs) => {
+                const active = inputs.filter((input) => tsMs >= input.start && (tsMs < input.end || (tsMs === end && input.page.shellDestroyTsMs === undefined)));
+                const observations = active.map((input) => {
+                    while (input.index + 1 < input.series.points.length && input.series.points[input.index + 1].tsMs <= tsMs)
+                        input.index += 1;
+                    return input.series.points[input.index];
+                });
+                const known = observations.filter((p) => !!p && !p.unavailable);
+                const missing = known.length !== active.length;
+                return {
+                    tsMs,
+                    value: known.reduce((sum, p) => sum + p.value, 0),
+                    unavailable: active.length > 0 && known.length === 0 ? 'active page estimates unavailable' : undefined,
+                    partial: missing || known.some((p) => p.partial),
+                    instanceIds: active.map((input) => input.page.instanceId),
+                    ...(known.length ? { sourceTsMs: Math.max(...known.map((p) => p.sourceTsMs ?? p.tsMs)) } : {}),
+                };
+            }),
+        };
+    });
+}
+function graphicComparison(krypton, animax, end) {
+    const aligned = alignGraphicSeries([krypton, ...animax], end);
+    return {
+        name: 'Graphic Total Estimate',
+        label: { zh: 'Graphic总估算（Krypton + AnimaX）', en: 'Graphic total estimate (Krypton + AnimaX)' },
+        unit: 'bytes',
+        points: aligned[0].points.map((_, index) => {
+            const points = aligned.map((series) => series.points[index]);
+            const known = points.filter((p) => !p.unavailable);
+            return {
+                tsMs: points[0].tsMs,
+                value: known.reduce((sum, p) => sum + p.value, 0),
+                unavailable: known.length === 0 ? 'estimates unavailable' : undefined,
+                partial: known.length !== points.length || known.some((p) => p.partial),
+            };
+        }),
+    };
+}
+async function queryKryptonCharts(traceQuery, start, end, pages = []) {
+    const rows = await traceQuery.query(`
+    SELECT ct.id track_id, ct.name, pct.upid, c.id counter_id, c.ts, c.value
+    FROM counter_track ct
+    LEFT JOIN process_counter_track pct ON pct.id = ct.id
+    LEFT JOIN counter c ON c.track_id = ct.id
+    WHERE ct.name GLOB 'Krypton*' OR ct.name = 'summary.graphics'
+    ORDER BY ct.id, c.ts, c.id
+  `);
+    const groups = new Map();
+    const graphicsTracks = new Map();
+    for (const row of rows) {
+        const name = String(row['name']);
+        if (name === 'summary.graphics') {
+            if (row['upid'] == null)
+                continue;
+            const upid = Number(row['upid']);
+            const tracks = graphicsTracks.get(upid) ?? [];
+            graphicsTracks.set(upid, tracks);
+            const trackId = Number(row['track_id']);
+            let series = tracks.find((s) => s.trackId === trackId);
+            if (!series) {
+                series = {
+                    name,
+                    label: { zh: '系统图形内存 · summary.graphics', en: 'System graphics memory · summary.graphics' },
+                    trackId,
+                    unit: 'bytes',
+                    renderMode: 'line',
+                    interpolation: 'linear',
+                    color: '#dc2626',
+                    points: [],
+                };
+                tracks.push(series);
+            }
+            if (row['ts'] != null)
+                series.points.push(point(Number(row['ts']) / 1e6, Number(row['counter_id']), [row['value']]));
+            continue;
+        }
+        if (!/(Mem|Cnt)$/.test(name) && name !== 'KryptonTotalMemEst')
+            continue;
+        const processUpid = row['upid'] == null ? undefined : Number(row['upid']);
+        // Unknown process tracks are not safe to merge.
+        const key = processUpid === undefined ? `unknown_${row['track_id']}` : String(processUpid);
+        const group = groups.get(key) ?? { processUpid, tracks: new Map(), pages: [] };
+        groups.set(key, group);
+        const trackId = Number(row['track_id']);
+        const series = group.tracks.get(trackId) ?? {
+            name,
+            label: label(name),
+            colorKey: colorKey(name),
+            trackId,
+            unit: name.endsWith('Cnt') ? 'count' : 'bytes',
+            points: [],
+        };
+        group.tracks.set(trackId, series);
+        if (row['ts'] != null)
+            series.points.push(point(Number(row['ts']) / 1e6, Number(row['counter_id']), [row['value']]));
+    }
+    // Page estimates are independent of page selection, but require a matching global Krypton group.
+    for (const page of pages) {
+        if (!page.analysis.graphicMemoryChart?.series.some(isAnimaxSeries))
+            continue;
+        if (page.processUpid !== undefined)
+            groups.get(String(page.processUpid))?.pages.push(page);
+    }
+    return [...groups].map(([key, group]) => {
+        const tracks = [...group.tracks.values()].sort((a, b) => a.name.localeCompare(b.name));
+        const names = tracks.map((s) => s.name);
+        const ambiguous = [...new Set(names.filter((name, i) => names.indexOf(name) !== i))];
+        const unique = tracks.filter((s) => !ambiguous.includes(s.name));
+        const animax = aggregateAnimaxSeries(group.pages, start, end);
+        const notes = [
+            estimateNote,
+            {
+                zh: '各轨道独立异步上报，按各自最近一次观测对齐；KryptonTotalMemEst 仅作独立对照。进程全局记录独立于页面/App，不要求等于页面之和；生命周期气泡仅作背景，不提供页面归因。',
+                en: 'Tracks report asynchronously and are aligned by their own latest observations. KryptonTotalMemEst is an independent comparison. Process recording is separate from page/App bookkeeping and need not equal page sums. Lifecycle bubbles provide context, not page attribution.',
+            },
+        ];
+        if (ambiguous.length)
+            notes.push({
+                zh: `同进程同名轨道归属不明，以下资源不可用：${ambiguous.join(', ')}`,
+                en: `Ambiguous same-name tracks in this process are unavailable: ${ambiguous.join(', ')}`,
+            });
+        const memoryNotes = [...notes];
+        if (animax.length)
+            memoryNotes.push({
+                zh: 'Graphic 合计与占比包含 Krypton 内存分量及同进程 AnimaX 页面估算。同名 AnimaX 类别按存活页面求和，每页 sizeBytes 只计一次；首报前及缺失值为未知，页面退出后不再计入该页估算，这不代表已测得实际释放。Graphic 总估算对照为 KryptonTotalMemEst 加 AnimaX；部分来源缺失时只显示已知部分。AnimaX 值可能来自 Player 缓存。',
+                en: 'Graphic sums and shares include Krypton memory components and AnimaX page estimates in the same process. Each AnimaX category sums active pages, counting each page sizeBytes once. Values are unknown before reporting or when missing; page exit removes its estimate without measuring actual release. The Graphic total estimate comparison adds AnimaX to KryptonTotalMemEst; missing sources yield known-part values only. AnimaX values may be cached by Players.',
+            });
+        const comparisons = unique.filter((s) => s.name === 'KryptonTotalMemEst');
+        if (animax.length && comparisons[0])
+            comparisons.push(graphicComparison(comparisons[0], animax, end));
+        const base = { xStartTsMs: start, xEndTsMs: end, zeroBaseline: true, events: [] };
+        const memoryChart = {
+            ...base,
+            id: `krypton_${key}_memory`,
+            title: 'Graphic Resource Memory',
+            renderMode: 'stacked-area',
+            series: alignGraphicSeries([...unique.filter((s) => s.name.endsWith('Mem')), ...animax], end),
+            graphics: {
+                notes: memoryNotes,
+                filterPageEvents: true,
+                comparisons: alignGraphicSeries(comparisons, end),
+            },
+        };
+        const overlays = group.processUpid === undefined ? [] : (graphicsTracks.get(group.processUpid) ?? []);
+        if (overlays.length === 1) {
+            memoryChart.series.push(...alignGraphicSeries(overlays, end));
+            memoryNotes.push({
+                zh: '红色细折线 summary.graphics 为系统上报的进程图形内存，独立于资源估算；使用相同 bytes 纵轴，不计入面积合计、占比、资源峰值或 Graphic 总估算。折线随原始采样连接，首报前未知。',
+                en: 'The thin red summary.graphics line is system-reported process graphics memory, independent of resource estimates. It shares the bytes axis but is excluded from area sums, shares, resource peaks and the Graphic total estimate. The line connects observed samples and is unknown before the first report.',
+            });
+        }
+        else if (overlays.length > 1) {
+            memoryNotes.push({
+                zh: '同进程存在多条 summary.graphics 轨道，无法唯一匹配，未叠加系统图形内存折线。',
+                en: 'Multiple summary.graphics tracks in this process prevent unique matching; the system graphics line is omitted.',
+            });
+        }
+        const countChart = {
+            ...base,
+            id: `krypton_${key}_counts`,
+            title: 'Krypton Graphics Resource Counts',
+            series: alignGraphicSeries(unique.filter((s) => s.unit === 'count'), end),
+            graphics: {
+                notes: [...notes, { zh: '计数范围存在重叠，不求和。', en: 'Count scopes overlap and are not summed.' }],
+                filterPageEvents: true,
+            },
+        };
+        summarizeMemory(memoryChart, start);
+        return { processUpid: group.processUpid, memoryChart, countChart };
+    });
+}
+//# sourceMappingURL=graphics_memory.js.map
 
 /***/ },
 
@@ -755,6 +1339,7 @@ exports.queryVMMemory = queryVMMemory;
 exports.querySharedBtsLoadedPages = querySharedBtsLoadedPages;
 exports.queryMemoryAnalysis = queryMemoryAnalysis;
 const constant_1 = __webpack_require__(7309);
+const graphics_memory_1 = __webpack_require__(2821);
 const PAGE_CREATE_EARLY_MS = 200;
 const GC_SETTLE_MS = 10;
 const MAX_ATTENTION_MS = 5000;
@@ -763,7 +1348,6 @@ const OVERLAP_PEAK_WINDOW_MS = 3000;
 const HIGH_MEMORY_BYTES = 150 * 1024 * 1024;
 const PAGE_ROLLBACK_BYTES = 2 * 1024 * 1024;
 const MTS_POOL_GROWTH_BYTES = 3 * 1024 * 1024;
-const SHARED_BTS_LEAK_BYTES = 32 * 1024;
 const SUPPORTED_MEMORY_VMS = new Set(['quickjs(gc)', 'quickjs(rc)']);
 const URL_EVENT_NAMES = [
     'LynxView::loadTemplateBundle',
@@ -813,13 +1397,16 @@ function normalizeVmEngineDesc(desc) {
 function supportsMemory(vmType) {
     return SUPPORTED_MEMORY_VMS.has(vmType.toLowerCase());
 }
-function sameNumberSet(left, right) {
-    if (left.length !== right.length) {
-        return false;
+function parseBtsSlotId(key) {
+    const match = /^(?:debug\.)?slot_(\d+)$/.exec(key);
+    if (!match?.[1]) {
+        return undefined;
     }
-    const sortedLeft = [...left].sort((a, b) => a - b);
-    const sortedRight = [...right].sort((a, b) => a - b);
-    return sortedLeft.every((value, index) => value === sortedRight[index]);
+    const slotId = Number(match[1]);
+    return Number.isSafeInteger(slotId) && slotId >= 0 && slotId <= 255 ? slotId : undefined;
+}
+function isBtsPageSlot(slotId) {
+    return slotId !== undefined && Number.isInteger(slotId) && slotId >= 3 && slotId <= 255;
 }
 function lastAt(items, tsMs) {
     let low = 0;
@@ -935,10 +1522,10 @@ function analyzeTrend(series, minimumSamples = 10) {
         sampleCount: samples.length,
         reason: rising
             ? sparseSamples
-                ? 'GC 后内存水位整体上移，稳健斜率为正，且首尾差异超过噪声阈值。'
+                ? 'VM_GC 后内存水位整体上移，稳健斜率为正，且首尾差异超过噪声阈值。'
                 : '平滑后的基线持续上移，稳健斜率为正，且首尾差异超过噪声阈值。'
             : sparseSamples
-                ? '未同时满足 GC 后内存水位整体上移、正斜率和显著首尾差异。'
+                ? '未同时满足 VM_GC 后内存水位整体上移、正斜率和显著首尾差异。'
                 : '未同时满足基线持续上移、正斜率和显著首尾差异。',
     };
 }
@@ -959,8 +1546,8 @@ async function queryEvents(traceQuery) {
         'page_uses_bts_vm',
         'BTSRuntime::Destroy',
         'destroy_vm_instance',
+        'VM_GC',
         'RunGC',
-        'will_capture_snapshot',
         'capture_snapshot',
         ...URL_EVENT_NAMES,
     ];
@@ -973,16 +1560,30 @@ async function queryEvents(traceQuery) {
       s.dur,
       MAX(CASE WHEN a.flat_key IN ('debug.instance_id', 'args.instance_id') THEN a.display_value END) instance_id,
       MAX(CASE WHEN a.flat_key IN ('debug.url', 'args.url') THEN a.display_value END) url,
-      MAX(CASE WHEN a.flat_key = 'debug.desc' THEN COALESCE(a.string_value, a.display_value) END) desc,
-      MAX(CASE WHEN a.flat_key = 'debug.group_id' THEN a.display_value END) group_id,
-      MAX(CASE WHEN a.flat_key = 'debug.ptr' THEN a.display_value END) ptr,
+      MAX(
+        CASE
+          WHEN a.flat_key IN ('debug.desc', 'args.desc', 'desc')
+          THEN COALESCE(a.string_value, a.display_value)
+        END
+      ) desc,
+      MAX(CASE WHEN a.flat_key IN ('debug.group_id', 'args.group_id', 'group_id') THEN a.display_value END) group_id,
+      MAX(CASE WHEN a.flat_key IN ('debug.ptr', 'args.ptr', 'ptr') THEN a.display_value END) ptr,
+      MAX(CASE WHEN a.flat_key IN ('debug.slot', 'args.slot') THEN a.display_value END) slot,
       MAX(CASE WHEN a.flat_key = 'debug.snapshot_id' THEN a.display_value END) snapshot_id,
       MAX(CASE WHEN a.flat_key = 'debug.id' THEN a.display_value END) snapshot_vm_id,
       MAX(CASE WHEN a.flat_key = 'debug.total_length' THEN a.display_value END) total_length,
-      MAX(CASE WHEN a.flat_key = 'debug.chunk_count' THEN a.display_value END) chunk_count
+      MAX(CASE WHEN a.flat_key = 'debug.chunk_count' THEN a.display_value END) chunk_count,
+      MAX(CASE WHEN a.flat_key = 'debug.retained_bytes' THEN a.display_value END) retained_bytes,
+      MAX(CASE WHEN a.flat_key = 'debug.trigger_retained_bytes' THEN a.display_value END) trigger_retained_bytes,
+      MAX(CASE WHEN a.flat_key = 'debug.previous_retained_bytes' THEN a.display_value END) previous_retained_bytes,
+      MAX(CASE WHEN a.flat_key = 'debug.post_exit_page_count' THEN a.display_value END) post_exit_page_count,
+      MAX(CASE WHEN a.flat_key = 'debug.capture_reason' THEN a.display_value END) capture_reason,
+      MAX(CASE WHEN a.flat_key = 'debug.include_internal_allocations' THEN a.display_value END) include_internal_allocations,
+      MAX(CASE WHEN a.flat_key = 'debug.change_percent' THEN a.display_value END) change_percent
     FROM slice s
     LEFT JOIN args a ON a.arg_set_id = s.arg_set_id
     WHERE s.name IN (${quotedNames})
+      AND NOT (s.name IN ('LynxShell::~LynxShell', 'BTSRuntime::Destroy', 'VM_GC', 'RunGC') AND s.dur < 0)
     GROUP BY s.id
     ORDER BY s.ts
   `);
@@ -999,10 +1600,20 @@ async function queryEvents(traceQuery) {
             desc: toString(row['desc']),
             groupId: toString(row['group_id']),
             ptr: toString(row['ptr']),
+            slot: toOptionalNumber(row['slot']),
             snapshotId: toString(row['snapshot_id']),
             snapshotVmId: toString(row['snapshot_vm_id']),
             totalLength: toNumber(row['total_length']),
             chunkCount: toNumber(row['chunk_count']),
+            retainedBytes: toOptionalNumber(row['retained_bytes']),
+            triggerRetainedBytes: toOptionalNumber(row['trigger_retained_bytes']),
+            previousRetainedBytes: toOptionalNumber(row['previous_retained_bytes']),
+            postExitPageCount: toOptionalNumber(row['post_exit_page_count']),
+            captureReason: toString(row['capture_reason']),
+            includeInternalAllocations: row['include_internal_allocations'] === null || row['include_internal_allocations'] === undefined
+                ? undefined
+                : ['1', 'true'].includes(toString(row['include_internal_allocations']).toLowerCase()),
+            changePercent: toOptionalNumber(row['change_percent']),
         };
     });
 }
@@ -1052,6 +1663,7 @@ async function queryTrackAndSampleData(traceQuery) {
             tsMs: toNumber(row['ts']) / constant_1.NS_TO_MS,
             totalBytes: toNumber(row['value']),
             uiCounts: {},
+            graphics: [],
         };
         sampleById.set(sample.id, sample);
         const current = samples.get(track.instanceId) ?? [];
@@ -1062,6 +1674,7 @@ async function queryTrackAndSampleData(traceQuery) {
     SELECT
       c.id counter_id,
       a.flat_key,
+      a.string_value component_json,
       json_extract(a.string_value, '$.category') category,
       json_extract(a.string_value, '$.sizeBytes') size_bytes,
       json_extract(a.string_value, '$.instanceCount') instance_count,
@@ -1072,7 +1685,8 @@ async function queryTrackAndSampleData(traceQuery) {
     WHERE c.track_id IN (${trackIds})
       AND a.string_value IS NOT NULL
       AND json_valid(a.string_value)
-      AND json_extract(a.string_value, '$.category') IS NOT NULL
+      AND (json_extract(a.string_value, '$.category') IS NOT NULL
+        OR lower(a.flat_key) LIKE '%canvas%' OR lower(a.flat_key) LIKE '%animax%')
     ORDER BY c.id
   `);
     for (const row of detailRows) {
@@ -1080,7 +1694,10 @@ async function queryTrackAndSampleData(traceQuery) {
         if (!sample) {
             continue;
         }
-        const category = toString(row['category']);
+        const graphic = (0, graphics_memory_1.parseGraphicComponent)(toString(row['component_json']), toString(row['flat_key']));
+        if (graphic)
+            sample.graphics.push(graphic);
+        const category = graphic?.category ?? toString(row['category']);
         const memory = {
             accumulateBytes: toNumber(row['size_bytes']),
             rssBytes: toNumber(row['base_bytes']) + toNumber(row['page_rss_bytes']),
@@ -1130,6 +1747,7 @@ async function queryBtsMemoryTracks(traceQuery) {
     ORDER BY c.track_id, c.ts
   `);
     const tracks = new Map();
+    const samplesById = new Map();
     for (const row of rows) {
         const trackId = toNumber(row['track_id']);
         const tsMs = toNumber(row['ts']) / constant_1.NS_TO_MS;
@@ -1142,7 +1760,9 @@ async function queryBtsMemoryTracks(traceQuery) {
                 accumulateBytes: toNumber(row['value']),
                 rssBytes: toNumber(row['base_usage']) + toNumber(row['page_rss_usage']),
             },
+            slots: {},
         };
+        samplesById.set(sample.id, sample);
         const current = tracks.get(trackId) ?? {
             id: trackId,
             name: toString(row['name']),
@@ -1156,6 +1776,26 @@ async function queryBtsMemoryTracks(traceQuery) {
         current.lastTsMs = Math.max(current.lastTsMs, tsMs);
         current.samples.push(sample);
         tracks.set(trackId, current);
+    }
+    const slotRows = await traceQuery.query(`
+    SELECT c.id counter_id, a.flat_key, a.display_value
+    FROM counter_track ct
+    JOIN counter c ON c.track_id = ct.id
+    JOIN args a ON a.arg_set_id = c.arg_set_id
+    WHERE ct.name GLOB 'bts_vm_acc_*'
+      AND (
+        a.flat_key GLOB 'debug.slot_[0-9]*'
+        OR a.flat_key GLOB 'slot_[0-9]*'
+      )
+    ORDER BY c.id, a.flat_key
+  `);
+    for (const row of slotRows) {
+        const sample = samplesById.get(toNumber(row['counter_id']));
+        const slotId = parseBtsSlotId(toString(row['flat_key']));
+        const value = toNumber(row['display_value'], Number.NaN);
+        if (sample && slotId !== undefined && Number.isFinite(value)) {
+            sample.slots[slotId] = Math.max(0, value);
+        }
     }
     return tracks;
 }
@@ -1197,6 +1837,7 @@ async function queryPoolStates(traceQuery) {
         args[toString(row['flat_key'])] = toString(row['string_value'] ?? row['display_value']);
         grouped.set(id, args);
         metadata.set(id, {
+            id,
             name: toString(row['name']),
             tsMs: toNumber(row['ts']) / constant_1.NS_TO_MS,
         });
@@ -1209,12 +1850,14 @@ async function queryPoolStates(traceQuery) {
         }
         let accumulateBytes = 0;
         let rssBytes = 0;
+        let instanceCount = 0;
         for (const [key, value] of Object.entries(args)) {
             if (!key.startsWith('debug.id_')) {
                 continue;
             }
             try {
                 const memory = JSON.parse(value);
+                instanceCount += 1;
                 accumulateBytes += toNumber(memory['acc_usage']);
                 rssBytes += toNumber(memory['base_usage']) + toNumber(memory['page_rss_usage']);
             }
@@ -1222,10 +1865,20 @@ async function queryPoolStates(traceQuery) {
                 // Ignore malformed pool entries and retain the remaining valid entries.
             }
         }
+        const isGlobalPoolArg = args['debug.is_global_pool'];
+        const isGlobalPool = isGlobalPoolArg === '1' ? true : isGlobalPoolArg === '0' ? false : undefined;
+        const url = event.name === 'mts_vm_pool_state'
+            ? isGlobalPool
+                ? 'global_pool'
+                : args['debug.url']?.trim() || 'Unknown URL'
+            : '';
         states.push({
             ...event,
             poolInstanceId: args['debug.pool_instance_id'] ?? 'bts',
+            url,
+            isGlobalPool,
             destroyed: args['debug.destroyed'] === '1',
+            instanceCount,
             memory: { accumulateBytes, rssBytes },
         });
     }
@@ -1280,11 +1933,11 @@ function buildPages(events, tracks, samples, traceStartMs, traceEndMs, options) 
             btsVmType: '',
             btsVmName: '',
             btsVmGeneration: 0,
+            btsSlot: btsCreateEvent?.slot,
             sharedBts: false,
             classification: preExisting ? 'pre-existing' : 'overlapping',
             selected,
             analysis: {
-                sharedBtsLeaks: [],
                 trendCharts: [],
                 trends: [],
                 notes: [],
@@ -1316,6 +1969,7 @@ function buildVms(events, pages, traceStartMs) {
             instanceIds: [event.instanceId],
             createTsMs: event.tsMs,
             destroyTsMs: page.destroyTsMs,
+            gcEvents: [],
             destroyed: page.destroyed,
             supportsMemory: supportsMemory(type),
         });
@@ -1324,15 +1978,26 @@ function buildVms(events, pages, traceStartMs) {
     const activeByName = new Map();
     const nextGeneration = new Map();
     const btsEvents = events
-        .filter((event) => event.name === 'page_uses_bts_vm' || event.name === 'destroy_vm_instance')
-        .sort((a, b) => a.tsMs - b.tsMs);
+        .filter((event) => event.name === 'page_uses_bts_vm' || event.name === 'destroy_vm_instance' || event.name === 'VM_GC')
+        .sort((a, b) => {
+        const leftTsMs = a.name === 'VM_GC' ? a.endTsMs : a.tsMs;
+        const rightTsMs = b.name === 'VM_GC' ? b.endTsMs : b.tsMs;
+        return leftTsMs - rightTsMs || a.id - b.id;
+    });
     for (const event of btsEvents) {
+        if (event.name === 'VM_GC') {
+            const active = activeByPtr.get(event.ptr);
+            if (active) {
+                active.gcEvents.push({ sliceId: event.id, tsMs: event.endTsMs });
+            }
+            continue;
+        }
         if (event.name === 'destroy_vm_instance') {
             const active = activeByPtr.get(event.ptr);
             if (!active) {
                 continue;
             }
-            active.destroyTsMs = event.endTsMs;
+            active.destroyTsMs = event.tsMs;
             active.destroyed = true;
             nextGeneration.set(active.name, active.generation + 1);
             for (const [ptr, candidate] of activeByPtr) {
@@ -1355,7 +2020,7 @@ function buildVms(events, pages, traceStartMs) {
         let vm = activeByPtr.get(event.ptr) ?? activeByName.get(name);
         if (!vm) {
             const generation = nextGeneration.get(name) ?? 0;
-            vm = {
+            const createdVm = {
                 id: `bts_${name}_${generation}`,
                 kind: 'bts',
                 name,
@@ -1365,11 +2030,13 @@ function buildVms(events, pages, traceStartMs) {
                 shared,
                 instanceIds: [],
                 createTsMs: event.tsMs,
+                gcEvents: [],
                 destroyed: false,
                 supportsMemory: supportsMemory(normalizeVmEngineDesc(event.desc)),
             };
-            vms.push(vm);
-            activeByName.set(name, vm);
+            vm = createdVm;
+            vms.push(createdVm);
+            activeByName.set(name, createdVm);
         }
         activeByPtr.set(event.ptr, vm);
         if (!vm.instanceIds.includes(event.instanceId)) {
@@ -1380,6 +2047,7 @@ function buildVms(events, pages, traceStartMs) {
         page.btsVmName = vm.name;
         page.btsVmGeneration = vm.generation;
         page.btsVmPtr = vm.ptr;
+        page.btsSlot ??= event.slot;
         page.sharedBts = vm.shared;
         page.btsDestroyed = vm.destroyed;
     }
@@ -1403,7 +2071,7 @@ function assignBtsMemoryTracks(vms, tracks, traceEndMs) {
     const warnings = [];
     for (const vm of vms.filter((item) => item.kind === 'bts' && item.supportsMemory)) {
         const vmEndTsMs = vm.destroyTsMs ?? traceEndMs;
-        const candidates = [...tracks.values()].filter((track) => track.ptr === vm.ptr && track.firstTsMs >= vm.createTsMs && track.firstTsMs <= vmEndTsMs);
+        const candidates = [...tracks.values()].filter((track) => track.ptr === vm.ptr && track.lastTsMs >= vm.createTsMs && track.firstTsMs <= vmEndTsMs);
         if (candidates.length === 1) {
             vm.memoryTrackId = candidates[0]?.id;
             continue;
@@ -1414,14 +2082,9 @@ function assignBtsMemoryTracks(vms, tracks, traceEndMs) {
     }
     return warnings;
 }
-function buildSnapshots(events, vms) {
-    const willById = new Map(events
-        .filter((event) => event.name === 'will_capture_snapshot' && event.snapshotId)
-        .map((event) => [event.snapshotId, event]));
+function buildSnapshots(events, vms, pages, tracks) {
     const snapshots = [];
     for (const capture of events.filter((event) => event.name === 'capture_snapshot' && event.snapshotId)) {
-        const will = willById.get(capture.snapshotId);
-        const willTsMs = will?.tsMs ?? capture.tsMs;
         let memory = { accumulateBytes: 0, rssBytes: 0 };
         let vmType = '';
         if (capture.desc.trimStart().startsWith('{')) {
@@ -1437,46 +2100,76 @@ function buildSnapshots(events, vms) {
                 vmType = normalizeVmEngineDesc(capture.desc);
             }
         }
-        const label = capture.snapshotVmId || will?.snapshotVmId || '';
-        let assignedVm;
-        const sharedMatch = /^(.*)\(shared bts\)$/.exec(label);
-        const singleMatch = /^instance_(\d+)\(single bts\)$/.exec(label);
-        const mtsMatch = /^instance_(\d+)\(mts\)$/.exec(label);
-        if (sharedMatch?.[1]) {
-            assignedVm = vms.find((vm) => vm.kind === 'bts' &&
-                vm.shared &&
-                vm.name === sharedMatch[1] &&
-                vm.createTsMs <= willTsMs &&
-                (vm.destroyTsMs === undefined || willTsMs < vm.destroyTsMs));
+        const label = capture.snapshotVmId;
+        const match = /^(mts_instance|bts_vm|bts_instance|bts_residual|bts_unknown|bts_common|bts_overflow)\/([^/]+)(?:\/slot_(\d+))?$/.exec(label);
+        const kind = (match?.[1] ?? 'unknown');
+        const pageScope = ['mts_instance', 'bts_instance', 'bts_residual'].includes(kind);
+        const instanceId = pageScope ? toOptionalNumber(match?.[2]) : undefined;
+        const specialSlot = { bts_unknown: 0, bts_common: 1, bts_overflow: 2 }[kind];
+        const slotId = toOptionalNumber(match?.[3]) ?? specialSlot ?? capture.slot;
+        const page = pages.find((item) => item.instanceId === instanceId);
+        const candidates = vms.filter((vm) => {
+            if (vm.createTsMs > capture.tsMs || (vm.destroyTsMs !== undefined && capture.tsMs > vm.destroyTsMs))
+                return false;
+            if (!pageScope)
+                return (kind !== 'unknown' &&
+                    vm.kind === 'bts' &&
+                    tracks.get(vm.memoryTrackId ?? -1)?.name === `bts_vm_acc_${match?.[2]}`);
+            if (kind === 'mts_instance')
+                return vm.kind === 'mts' && vm.instanceIds.includes(instanceId ?? -1);
+            return kind !== 'unknown' && vm.id === page?.btsVmId;
+        });
+        const errors = [];
+        if (candidates.length !== 1)
+            errors.push('快照不能唯一绑定 VM generation。');
+        if (capture.instanceId !== undefined && capture.instanceId !== instanceId)
+            errors.push('instance_id 与范围 ID 冲突。');
+        if (capture.slot !== undefined && capture.slot !== slotId)
+            errors.push('slot 与范围 ID 冲突。');
+        if ((kind === 'bts_instance' || kind === 'bts_residual') && (page?.btsSlot !== slotId || !isBtsPageSlot(slotId))) {
+            errors.push('页面专用 slot 归属不明确。');
         }
-        else if (singleMatch?.[1]) {
-            const instanceId = Number(singleMatch[1]);
-            assignedVm = vms.find((vm) => vm.kind === 'bts' && vm.instanceIds.includes(instanceId));
+        if (kind === 'bts_residual' && page?.btsDestroyTsMs !== undefined && capture.tsMs < page.btsDestroyTsMs) {
+            errors.push('residual 采集早于 BTS 页面销毁。');
         }
-        else if (mtsMatch?.[1]) {
-            assignedVm = vms.find((vm) => vm.kind === 'mts' && vm.instanceIds.includes(Number(mtsMatch[1])));
+        if (kind === 'bts_residual' && (capture.retainedBytes === undefined || capture.retainedBytes < 0)) {
+            errors.push('residual 缺少有效的 retained_bytes。');
         }
         snapshots.push({
             sliceId: capture.id,
             vmId: label,
             snapshotId: capture.snapshotId,
             index: 0,
-            willTsMs,
             captureTsMs: capture.tsMs,
-            dumpDurationMs: Math.max(0, capture.tsMs - willTsMs),
+            dumpDurationMs: capture.endTsMs > capture.tsMs ? capture.endTsMs - capture.tsMs : undefined,
             totalLength: capture.totalLength,
             chunkCount: capture.chunkCount,
             vmType,
             memory,
-            assignedVmId: assignedVm?.id,
+            assignedVmId: errors.length === 0 ? candidates[0]?.id : undefined,
+            kind,
+            instanceId,
+            slotId,
+            retainedBytes: capture.retainedBytes,
+            triggerRetainedBytes: capture.triggerRetainedBytes,
+            previousRetainedBytes: capture.previousRetainedBytes,
+            postExitPageCount: capture.postExitPageCount,
+            captureReason: capture.captureReason,
+            includeInternalAllocations: capture.includeInternalAllocations,
+            changePercent: capture.changePercent,
+            integrity: capture.chunkCount === 0 && capture.totalLength === 0 && capture.retainedBytes === 0
+                ? 'metadata-only'
+                : 'pending',
+            identityError: errors.length ? errors.join(' ') : undefined,
         });
     }
     const byLabel = new Map();
-    for (const snapshot of snapshots.sort((a, b) => a.willTsMs - b.willTsMs)) {
-        const current = byLabel.get(snapshot.vmId) ?? [];
+    for (const snapshot of snapshots.sort((a, b) => a.captureTsMs - b.captureTsMs || a.sliceId - b.sliceId)) {
+        const key = snapshot.assignedVmId ?? snapshot.vmId;
+        const current = byLabel.get(key) ?? [];
         current.push(snapshot);
         snapshot.index = current.length;
-        byLabel.set(snapshot.vmId, current);
+        byLabel.set(key, current);
     }
     return snapshots;
 }
@@ -1555,7 +2248,7 @@ function vmMemoryAt(context, vm, tsMs) {
     const track = context.btsMemoryTracks.get(vm.memoryTrackId ?? -1);
     return lastAt(track?.samples ?? [], tsMs)?.memory ?? { accumulateBytes: 0, rssBytes: 0 };
 }
-function buildSharedBtsVmAnalyses(context, leakEvents, issues) {
+function buildSharedBtsVmAnalyses(context, issues) {
     const charts = [];
     const analyses = [];
     context.vms
@@ -1569,28 +2262,51 @@ function buildSharedBtsVmAnalyses(context, leakEvents, issues) {
         if (!memoryTrack) {
             return;
         }
-        const sampleTimes = new Set([startTsMs, endTsMs]);
-        for (const sample of memoryTrack.samples) {
-            if (sample.tsMs >= startTsMs && sample.tsMs <= endTsMs) {
-                sampleTimes.add(sample.tsMs);
-            }
-        }
-        if (sampleTimes.size <= 1) {
+        const trackSamples = memoryTrack.samples.filter((sample) => sample.tsMs >= startTsMs && sample.tsMs <= endTsMs);
+        if (trackSamples.length === 0) {
             return;
         }
-        const sortedSampleTimes = [...sampleTimes].sort((left, right) => left - right);
-        const accumulatePoints = sortedSampleTimes.map((tsMs) => ({
-            tsMs,
-            value: vmMemoryAt(context, vm, tsMs).accumulateBytes,
-            loadedInstanceIds: sharedBtsLoadedPagesAt(context, vm, tsMs),
-        }));
-        const rssPoints = sortedSampleTimes
-            .sort((left, right) => left - right)
-            .map((tsMs) => ({
-            tsMs,
-            value: vmMemoryAt(context, vm, tsMs).rssBytes,
-            loadedInstanceIds: sharedBtsLoadedPagesAt(context, vm, tsMs),
-        }));
+        const chartSamples = [...trackSamples];
+        const lastSample = chartSamples[chartSamples.length - 1];
+        if (lastSample && lastSample.tsMs < endTsMs) {
+            chartSamples.push({ ...lastSample, tsMs: endTsMs });
+        }
+        const slotIds = [
+            ...new Set(chartSamples.flatMap((sample) => Object.keys(sample.slots).map((slotId) => Number(slotId)))),
+        ].sort((left, right) => left - right);
+        const series = slotIds.map((slotId) => {
+            const slotPages = vmPages
+                .filter((page) => page.btsSlot === slotId)
+                .sort((left, right) => left.instanceId - right.instanceId);
+            const name = slotId === 0
+                ? 'slot_0 (unknown)'
+                : slotId === 1
+                    ? 'slot_1 (common)'
+                    : slotId === 2
+                        ? 'slot_2 (overflow)'
+                        : slotPages.length === 1
+                            ? `slot_${slotId} (instance_id=${slotPages[0]?.instanceId})`
+                            : slotPages.length > 1
+                                ? `slot_${slotId} (instance_ids=${slotPages.map((page) => page.instanceId).join(', ')})`
+                                : `slot_${slotId}`;
+            return {
+                name,
+                unit: 'bytes',
+                renderMode: 'stacked-area',
+                slotId,
+                points: chartSamples.map((sample) => {
+                    const pagesAtSample = slotPages.filter((page) => page.btsCreateTsMs !== undefined && page.btsCreateTsMs <= sample.tsMs);
+                    return {
+                        tsMs: sample.tsMs,
+                        value: sample.slots[slotId] ?? 0,
+                        instanceIds: pagesAtSample.map((page) => page.instanceId),
+                        destroyedInstanceIds: pagesAtSample
+                            .filter((page) => page.btsDestroyTsMs !== undefined && page.btsDestroyTsMs <= sample.tsMs)
+                            .map((page) => page.instanceId),
+                    };
+                }),
+            };
+        });
         const pageIds = new Set(vm.instanceIds);
         const lifecycleEvents = context.events
             .filter((event) => (event.name === 'page_uses_bts_vm' || event.name === 'BTSRuntime::Destroy') &&
@@ -1603,17 +2319,18 @@ function buildSharedBtsVmAnalyses(context, leakEvents, issues) {
             return {
                 sliceId: event.id,
                 name: event.name,
-                tsMs: event.tsMs,
+                tsMs: event.name === 'BTSRuntime::Destroy' ? event.endTsMs : event.tsMs,
                 instanceId: event.instanceId,
                 url: page?.url || event.url,
             };
         });
-        const gcEvents = context.events
-            .filter((event) => event.name === 'RunGC' && event.tsMs >= startTsMs && event.tsMs <= endTsMs)
+        const vmGcEvents = vm.gcEvents
+            .filter((event) => event.tsMs >= startTsMs && event.tsMs <= endTsMs)
             .map((event) => ({
-            sliceId: event.id,
-            name: event.name,
+            sliceId: event.sliceId,
+            name: 'VM_GC',
             tsMs: event.tsMs,
+            renderMode: 'vertical-line',
         }));
         const destroyEvents = context.events
             .filter((event) => event.name === 'destroy_vm_instance' &&
@@ -1626,59 +2343,36 @@ function buildSharedBtsVmAnalyses(context, leakEvents, issues) {
             tsMs: event.tsMs,
         }));
         const snapshotEvents = context.snapshots
-            .filter((snapshot) => snapshot.assignedVmId === vm.id && snapshot.willTsMs >= startTsMs && snapshot.willTsMs <= endTsMs)
+            .filter((snapshot) => snapshot.assignedVmId === vm.id && snapshot.captureTsMs >= startTsMs && snapshot.captureTsMs <= endTsMs)
             .map((snapshot) => ({
             sliceId: snapshot.sliceId,
-            name: 'will_capture_snapshot',
-            tsMs: snapshot.willTsMs,
+            name: 'capture_snapshot',
+            tsMs: snapshot.captureTsMs,
+            instanceId: snapshot.instanceId,
             snapshotId: snapshot.snapshotId,
         }));
-        const events = [...lifecycleEvents, ...gcEvents, ...destroyEvents, ...snapshotEvents].sort((left, right) => left.tsMs - right.tsMs || left.name.localeCompare(right.name));
-        const issueEvents = leakEvents
-            .filter((event) => event.issue && event.vmId === vm.id && event.gcEndTsMs >= startTsMs && event.gcEndTsMs <= endTsMs)
-            .map((event) => ({
-            name: 'shared_bts_possible_leak',
-            tsMs: event.gcEndTsMs,
-            instanceIds: event.instanceIds,
-            confidence: event.confidence,
-            accumulateDeltaBytes: event.accumulateDeltaBytes,
-            rssDeltaBytes: event.rssDeltaBytes,
-        }));
-        const chartEvents = [...events, ...issueEvents].sort((left, right) => left.tsMs - right.tsMs || left.name.localeCompare(right.name));
-        const chartId = `shared_bts_heap_${index}`;
+        const events = [...lifecycleEvents, ...vmGcEvents, ...destroyEvents, ...snapshotEvents].sort((left, right) => left.tsMs - right.tsMs || left.name.localeCompare(right.name));
+        const chartId = `shared_bts_slots_${index}`;
         const chart = {
             id: chartId,
-            title: `Shared BTS VM Heap Size: ${vm.name} (generation ${vm.generation})`,
+            title: `Shared BTS VM Slot Memory: ${vm.name} (generation ${vm.generation})`,
             xStartTsMs: startTsMs,
             xEndTsMs: endTsMs,
             zeroBaseline: true,
-            renderMode: 'interval-bars',
-            events: chartEvents,
-            series: [
-                {
-                    name: 'BTS Accumulate',
-                    unit: 'bytes',
-                    renderMode: 'interval-bars',
-                    points: accumulatePoints,
-                },
-                {
-                    name: 'BTS RSS',
-                    unit: 'bytes',
-                    renderMode: 'line',
-                    points: rssPoints,
-                },
-            ],
+            renderMode: 'stacked-area',
+            events,
+            series,
         };
+        const gcSamples = [
+            ...new Map(vm.gcEvents
+                .map((event) => memoryTrack.samples.find((sample) => sample.tsMs >= event.tsMs && sample.tsMs <= endTsMs))
+                .filter((sample) => sample !== undefined)
+                .map((sample) => [sample.id, sample])).values(),
+        ];
         const gcAccumulateSeries = {
-            name: 'BTS Accumulate after GC',
+            name: 'BTS Accumulate after VM_GC',
             unit: 'bytes',
-            points: context.gcEvents
-                .map((event) => gcSettledTsMs(event))
-                .filter((tsMs) => tsMs >= memoryTrack.firstTsMs && tsMs <= endTsMs)
-                .map((tsMs) => ({
-                tsMs,
-                value: vmMemoryAt(context, vm, tsMs).accumulateBytes,
-            })),
+            points: gcSamples.map((sample) => ({ tsMs: sample.tsMs, value: sample.memory.accumulateBytes })),
         };
         const gcAccumulateTrend = analyzeTrend(gcAccumulateSeries, 3);
         const createdAfterTraceStart = memoryTrack.firstTsMs > context.traceStartMs + 100;
@@ -1699,7 +2393,7 @@ function buildSharedBtsVmAnalyses(context, leakEvents, issues) {
             issues.push({
                 code: 'shared_bts_accumulate_rising',
                 title: 'BTS 虚拟机 Accumulate 内存呈上涨趋势',
-                message: `BTS 虚拟机各次 GC 完成后的 Accumulate 内存呈上涨趋势，首尾稳定水位增加 ${gcAccumulateTrend.delta} bytes。`,
+                message: `BTS 虚拟机各次 VM_GC 完成后的 Accumulate 内存呈上涨趋势，首尾稳定水位增加 ${gcAccumulateTrend.delta} bytes。`,
                 confidence: 'medium',
                 instanceIds: [...vm.instanceIds].sort((left, right) => left - right),
                 vmId: vm.id,
@@ -1718,6 +2412,7 @@ function buildSharedBtsVmAnalyses(context, leakEvents, issues) {
             createdAfterTraceStart,
             destroyed: vm.destroyed,
             endRssBytes,
+            endRssSampleTsMs: lastAt(memoryTrack.samples, endTsMs)?.tsMs,
             notDestroyedIssue,
             gcAccumulateTrend,
         });
@@ -1735,17 +2430,6 @@ function sharedBtsLoadedPagesAt(context, vm, tsMs) {
             (page.btsDestroyTsMs === undefined || tsMs < page.btsDestroyTsMs));
     });
 }
-function sharedBtsLoadedPagesBeforeBtsCreate(context, vm, tsMs) {
-    if (!vm.shared || tsMs < vm.createTsMs || (vm.destroyTsMs !== undefined && tsMs >= vm.destroyTsMs)) {
-        return [];
-    }
-    return vm.instanceIds.filter((instanceId) => {
-        const page = context.pages.find((item) => item.instanceId === instanceId);
-        return (page?.btsCreateTsMs !== undefined &&
-            page.btsCreateTsMs < tsMs &&
-            (page.btsDestroyTsMs === undefined || tsMs < page.btsDestroyTsMs));
-    });
-}
 function pssForPage(context, page) {
     return (context.pssTracks.find((track) => track.upid !== undefined && track.upid === page.processUpid)?.points ??
         context.pssTracks[0]?.points ??
@@ -1754,21 +2438,65 @@ function pssForPage(context, page) {
 function poolMemoryAt(context, tsMs) {
     const btsState = [...context.poolStates]
         .filter((state) => state.name === 'bts_vm_pool_state' && state.tsMs <= tsMs)
-        .sort((a, b) => b.tsMs - a.tsMs)[0];
+        .sort((a, b) => b.tsMs - a.tsMs || b.id - a.id)[0];
     const latestMtsByPool = new Map();
-    for (const state of context.poolStates.filter((item) => item.name === 'mts_vm_pool_state' && item.tsMs <= tsMs)) {
+    const eligibleMtsStates = context.poolStates
+        .filter((item) => item.name === 'mts_vm_pool_state' && item.tsMs <= tsMs)
+        .sort((left, right) => left.tsMs - right.tsMs || left.id - right.id);
+    for (const state of eligibleMtsStates) {
         latestMtsByPool.set(state.poolInstanceId, state);
     }
-    const mts = [...latestMtsByPool.values()]
-        .filter((state) => !state.destroyed)
-        .reduce((total, state) => ({
+    const activeMtsStates = [...latestMtsByPool.values()].filter((state) => !state.destroyed);
+    const mts = activeMtsStates.reduce((total, state) => ({
         accumulateBytes: total.accumulateBytes + state.memory.accumulateBytes,
         rssBytes: total.rssBytes + state.memory.rssBytes,
     }), { accumulateBytes: 0, rssBytes: 0 });
+    const mtsPoolsByUrl = new Map();
+    for (const state of activeMtsStates) {
+        const current = mtsPoolsByUrl.get(state.url) ?? {
+            url: state.url,
+            instanceCount: 0,
+            memory: { accumulateBytes: 0, rssBytes: 0 },
+        };
+        current.instanceCount += state.instanceCount;
+        current.memory = {
+            accumulateBytes: current.memory.accumulateBytes + state.memory.accumulateBytes,
+            rssBytes: current.memory.rssBytes + state.memory.rssBytes,
+        };
+        mtsPoolsByUrl.set(state.url, current);
+    }
     return {
         bts: btsState?.memory ?? { accumulateBytes: 0, rssBytes: 0 },
         mts,
+        mtsPools: [...mtsPoolsByUrl.values()].sort((left, right) => left.url.localeCompare(right.url)),
     };
+}
+function diffMtsPoolMemory(startPools, endPools) {
+    const startByUrl = new Map(startPools.map((pool) => [pool.url, pool]));
+    const endByUrl = new Map(endPools.map((pool) => [pool.url, pool]));
+    const urls = [...new Set([...startByUrl.keys(), ...endByUrl.keys()])].sort((left, right) => left.localeCompare(right));
+    return urls.map((url) => {
+        const start = startByUrl.get(url);
+        const end = endByUrl.get(url);
+        const startInstanceCount = start?.instanceCount ?? 0;
+        const endInstanceCount = end?.instanceCount ?? 0;
+        const startAccumulateBytes = start?.memory.accumulateBytes ?? 0;
+        const endAccumulateBytes = end?.memory.accumulateBytes ?? 0;
+        const startRssBytes = start?.memory.rssBytes ?? 0;
+        const endRssBytes = end?.memory.rssBytes ?? 0;
+        return {
+            url,
+            startInstanceCount,
+            endInstanceCount,
+            instanceCountDelta: endInstanceCount - startInstanceCount,
+            startAccumulateBytes,
+            endAccumulateBytes,
+            accumulateDeltaBytes: endAccumulateBytes - startAccumulateBytes,
+            startRssBytes,
+            endRssBytes,
+            rssDeltaBytes: endRssBytes - startRssBytes,
+        };
+    });
 }
 function addIssue(issues, issue) {
     const key = `${issue.code}:${[...issue.instanceIds].sort((a, b) => a - b).join(',')}:${issue.vmId ?? ''}`;
@@ -1794,7 +2522,7 @@ function createMemoryChart(context, page, vm) {
     }
     else if (page.destroyTsMs !== undefined) {
         const destroyTsMs = page.destroyTsMs;
-        if (context.forceGc) {
+        if (context.memoryTraceEnabled) {
             const gc = firstGcAfter(context, destroyTsMs);
             endTsMs = gc === undefined ? destroyTsMs + GC_SETTLE_MS : gcSettledTsMs(gc);
         }
@@ -1895,8 +2623,10 @@ function createPageComponentChart(context, page) {
 }
 function analyzePageMetrics(context, issues) {
     const completedGroups = new Set();
+    const mtsPoolGrowthEvents = [];
     for (const page of context.pages) {
         page.analysis.componentChart = createPageComponentChart(context, page);
+        (0, graphics_memory_1.createPageGraphicCharts)(page, context.samples.get(page.instanceId) ?? [], context.traceEndMs, context.traceStartMs);
     }
     for (const page of context.pages.filter((item) => !item.preExisting)) {
         const groupKey = page.groupId ?? `page_${page.instanceId}`;
@@ -1959,20 +2689,32 @@ function analyzePageMetrics(context, issues) {
             const poolEndTsMs = Math.max(groupPage.realCreateTsMs, groupPage.destroyTsMs - 100);
             const poolEnd = poolMemoryAt(context, poolEndTsMs);
             const mtsPoolDeltaBytes = poolEnd.mts.rssBytes - poolStart.mts.rssBytes;
+            const pools = diffMtsPoolMemory(poolStart.mtsPools, poolEnd.mtsPools);
             groupPage.analysis.mtsPool = {
                 mtsPoolDeltaBytes,
                 startTsMs: groupPage.realCreateTsMs,
                 endTsMs: poolEndTsMs,
                 confidence: 'high',
+                pools,
             };
             if (mtsPoolDeltaBytes > MTS_POOL_GROWTH_BYTES) {
+                const poolUrls = pools.filter((pool) => pool.rssDeltaBytes > 0).map((pool) => pool.url);
                 addIssue(issues, {
                     code: 'mts_pool_growth',
                     title: 'MTS 虚拟机缓存池增长过多',
-                    message: `页面生命期内 MTS VM Pool RSS 增长 ${mtsPoolDeltaBytes} bytes，超过 3 MiB。`,
+                    message: `页面生命期内 MTS VM Pool RSS 增长 ${mtsPoolDeltaBytes} bytes，超过 3 MiB。归属：${poolUrls.join(', ') || 'Unknown URL'}。`,
                     confidence: 'high',
                     instanceIds: [groupPage.instanceId],
                     valueBytes: mtsPoolDeltaBytes,
+                    poolUrls,
+                });
+                mtsPoolGrowthEvents.push({
+                    id: `mts_pool_growth_${groupPage.instanceId}_${Math.round(poolEndTsMs)}`,
+                    instanceId: groupPage.instanceId,
+                    startTsMs: groupPage.realCreateTsMs,
+                    endTsMs: poolEndTsMs,
+                    totalRssDeltaBytes: mtsPoolDeltaBytes,
+                    pools,
                 });
             }
         }
@@ -1985,7 +2727,7 @@ function analyzePageMetrics(context, issues) {
                 .sort((a, b) => a.realCreateTsMs - b.realCreateTsMs)[0];
             const nextCreateTsMs = nextPage?.realCreateTsMs ?? Number.POSITIVE_INFINITY;
             let observationStartTsMs = destroyTsMs;
-            if (context.forceGc) {
+            if (context.memoryTraceEnabled) {
                 const gc = firstGcAfter(context, destroyTsMs);
                 if (gc === undefined) {
                     for (const groupPage of groupPages) {
@@ -2018,7 +2760,7 @@ function analyzePageMetrics(context, issues) {
             }
             const lowestBytes = lowestPoint.value;
             const deltaBytes = lowestBytes - baselinePoint.value;
-            const confidence = context.forceGc ? (deltaBytes < 0 ? 'low' : 'high') : 'low';
+            const confidence = context.memoryTraceEnabled ? (deltaBytes < 0 ? 'low' : 'high') : 'low';
             let message = '';
             if (deltaBytes < 0) {
                 message = '页面退出后 PSS 低于页面创建前水位，存在其它内存下降因素。';
@@ -2027,7 +2769,7 @@ function analyzePageMetrics(context, issues) {
                 message = '页面创建并销毁后 PSS 上涨不明显，内存泄漏概率较低。';
             }
             else {
-                message = context.forceGc
+                message = context.memoryTraceEnabled
                     ? '页面退出并完成 GC 后 PSS 仍有明显上涨。'
                     : '页面退出后 PSS 仍有上涨；未开启强制 GC，仅作为低置信度趋势参考。';
             }
@@ -2040,7 +2782,7 @@ function analyzePageMetrics(context, issues) {
                 observationStartTsMs,
                 observationEndTsMs,
                 confidence,
-                forcedGc: context.forceGc,
+                forcedGc: context.memoryTraceEnabled,
                 message,
             };
             for (const groupPage of groupPages) {
@@ -2065,162 +2807,39 @@ function analyzePageMetrics(context, issues) {
             page.analysis.notes.push('该页面未使用共享 BTS 虚拟机。');
         }
     }
+    return mtsPoolGrowthEvents;
 }
-function findSnapshotPairs(context, event, vm) {
-    const snapshots = context.snapshots.filter((snapshot) => snapshot.assignedVmId === vm.id);
-    const vmPages = context.pages.filter((page) => vm.instanceIds.includes(page.instanceId));
-    const pre = snapshots
-        .filter((snapshot) => {
-        if (snapshot.willTsMs >= event.gcEndTsMs) {
-            return false;
-        }
-        const created = vmPages.filter((page) => page.btsCreateTsMs !== undefined &&
-            page.btsCreateTsMs >= snapshot.willTsMs &&
-            page.btsCreateTsMs <= event.gcEndTsMs);
-        return created.every((page) => event.instanceIds.includes(page.instanceId));
-    })
-        .sort((a, b) => b.willTsMs - a.willTsMs)[0];
-    const post = snapshots
-        .filter((snapshot) => {
-        if (snapshot.willTsMs <= event.gcEndTsMs) {
-            return false;
-        }
-        return !vmPages.some((page) => page.btsCreateTsMs !== undefined &&
-            page.btsCreateTsMs >= event.gcEndTsMs &&
-            page.btsCreateTsMs <= snapshot.willTsMs);
-    })
-        .sort((a, b) => a.willTsMs - b.willTsMs)[0];
-    event.preSnapshotId = pre?.snapshotId;
-    event.postSnapshotId = post?.snapshotId;
-    event.analysable = pre !== undefined && post !== undefined;
-}
-function analyzeSharedBtsLeaks(context, issues) {
-    if (!context.forceGc) {
-        return { events: [], analysable: [] };
-    }
-    const events = [];
-    const processedCycles = new Set();
-    for (const vm of context.vms.filter((item) => item.kind === 'bts' && item.shared && item.supportsMemory)) {
-        const vmPages = context.pages.filter((page) => vm.instanceIds.includes(page.instanceId));
-        const createPages = vmPages
-            .filter((page) => page.btsCreateTsMs !== undefined)
-            .sort((a, b) => b.btsCreateTsMs - a.btsCreateTsMs);
-        for (const gcEvent of context.gcEvents) {
-            const gcTsMs = gcEvent.endTsMs;
-            const gcEndTsMs = gcSettledTsMs(gcEvent);
-            if (gcEndTsMs > context.traceEndMs) {
-                continue;
-            }
-            const endSet = sharedBtsLoadedPagesAt(context, vm, gcEndTsMs);
-            const beginPage = createPages.find((page) => page.btsCreateTsMs < gcTsMs &&
-                sameNumberSet(sharedBtsLoadedPagesBeforeBtsCreate(context, vm, page.btsCreateTsMs), endSet));
-            if (!beginPage) {
-                continue;
-            }
-            const instanceIds = vmPages
-                .filter((page) => page.btsCreateTsMs !== undefined &&
-                page.btsDestroyTsMs !== undefined &&
-                page.btsCreateTsMs >= beginPage.btsCreateTsMs &&
-                page.btsDestroyTsMs <= gcEndTsMs)
-                .map((page) => page.instanceId)
-                .sort((a, b) => a - b);
-            if (instanceIds.length === 0) {
-                continue;
-            }
-            const cycleKey = `${vm.id}:${instanceIds.join(',')}`;
-            if (processedCycles.has(cycleKey)) {
-                continue;
-            }
-            processedCycles.add(cycleKey);
-            const beginMemory = vmMemoryAt(context, vm, beginPage.btsCreateTsMs);
-            const endMemory = vmMemoryAt(context, vm, gcEndTsMs);
-            const accumulateDeltaBytes = endMemory.accumulateBytes - beginMemory.accumulateBytes;
-            const rssDeltaBytes = endMemory.rssBytes - beginMemory.rssBytes;
-            const issue = accumulateDeltaBytes >= SHARED_BTS_LEAK_BYTES;
-            const leakEvent = {
-                id: `${vm.id}_${Math.round(gcTsMs)}`,
-                vmId: vm.id,
-                instanceIds,
-                beginTsMs: beginPage.btsCreateTsMs,
-                gcTsMs,
-                gcEndTsMs,
-                accumulateDeltaBytes,
-                rssDeltaBytes,
-                confidence: 'medium',
-                issue,
-                analysable: false,
-            };
-            findSnapshotPairs(context, leakEvent, vm);
-            events.push(leakEvent);
-            for (const instanceId of instanceIds) {
-                context.pages.find((page) => page.instanceId === instanceId)?.analysis.sharedBtsLeaks.push(leakEvent);
-            }
-            if (issue) {
-                addIssue(issues, {
-                    code: 'shared_bts_possible_leak',
-                    title: '共享 BTS 虚拟机可能存在内存泄漏',
-                    message: `页面退出并完成 GC 后，共享 BTS Accumulate 增长 ${accumulateDeltaBytes} bytes。`,
-                    confidence: 'medium',
-                    instanceIds,
-                    vmId: vm.id,
-                    valueBytes: accumulateDeltaBytes,
-                });
-            }
-        }
-    }
-    const singlePageIssueEvents = events.filter((event) => event.issue && event.instanceIds.length === 1);
-    const byUrl = new Map();
-    for (const event of singlePageIssueEvents) {
-        const page = context.pages.find((item) => item.instanceId === event.instanceIds[0]);
-        if (!page?.url || page.repeatedFocusTotal === undefined) {
+function buildResidualAnalyses(context) {
+    const analyses = [];
+    for (const page of context.pages) {
+        if (!page.selected || page.btsVmId === undefined || page.btsSlot === undefined)
             continue;
-        }
-        const current = byUrl.get(page.url) ?? [];
-        current.push(event);
-        byUrl.set(page.url, current);
-    }
-    for (const [url, urlEvents] of byUrl) {
-        urlEvents.sort((a, b) => a.beginTsMs - b.beginTsMs);
-        const first = urlEvents[0];
-        if (!first) {
+        const snapshots = context.snapshots.filter((snapshot) => snapshot.kind === 'bts_residual' && snapshot.instanceId === page.instanceId);
+        if (snapshots.length === 0 && page.btsDestroyTsMs === undefined)
             continue;
-        }
-        const allPageRuns = context.pages
-            .filter((page) => page.url === url && page.repeatedFocusTotal !== undefined)
-            .sort((a, b) => a.realCreateTsMs - b.realCreateTsMs);
-        const allEvents = allPageRuns
-            .map((page) => events.find((event) => event.instanceIds.length === 1 && event.instanceIds[0] === page.instanceId))
-            .filter((event) => event !== undefined);
-        const firstDominates = allEvents.length > 1 &&
-            first.issue &&
-            allEvents
-                .slice(1)
-                .every((event) => Math.abs(first.accumulateDeltaBytes) >= 10 * Math.abs(event.accumulateDeltaBytes));
-        if (firstDominates) {
-            addIssue(issues, {
-                code: 'shared_bts_first_load_leak',
-                title: '共享 BTS 首次加载泄漏',
-                message: `页面 ${url} 首次加载后的 Accumulate 增量为 ${first.accumulateDeltaBytes} bytes，至少是后续每次的 10 倍。`,
-                confidence: 'high',
-                instanceIds: first.instanceIds,
-                vmId: first.vmId,
-                valueBytes: first.accumulateDeltaBytes,
-            });
-        }
-        else if (allEvents.length === allPageRuns.length && allEvents.every((event) => event.issue)) {
-            addIssue(issues, {
-                code: 'shared_bts_continuous_leak',
-                title: '共享 BTS 连续泄漏',
-                message: `页面 ${url} 每次加载后均出现 Accumulate 增长：${allEvents
-                    .map((event) => event.accumulateDeltaBytes)
-                    .join(', ')} bytes。`,
-                confidence: 'high',
-                instanceIds: allEvents.flatMap((event) => event.instanceIds),
-                vmId: first.vmId,
-            });
-        }
+        const id = `${page.btsVmId}_instance_${page.instanceId}_slot_${page.btsSlot}`;
+        const gaps = snapshots.flatMap((snapshot) => (snapshot.identityError ? [snapshot.identityError] : []));
+        if (snapshots.length === 0)
+            gaps.push('没有该销毁页面的 residual 快照，无法分析对象残留。');
+        if (!isBtsPageSlot(page.btsSlot))
+            gaps.push('非页面专用 slot，无法归因到单页。');
+        const analysis = {
+            id,
+            vmId: page.btsVmId,
+            instanceId: page.instanceId,
+            slotId: page.btsSlot,
+            destroyTsMs: page.btsDestroyTsMs,
+            snapshotIds: snapshots.map((snapshot) => snapshot.snapshotId),
+            tailComplete: false,
+            status: gaps.length ? 'insufficient' : 'pending',
+            gaps,
+            findings: [],
+            reportAnchor: `residual-instance-${page.instanceId}`,
+        };
+        analyses.push(analysis);
+        page.analysis.residualAnalysisId = id;
     }
-    return { events, analysable: events.filter((event) => event.issue && event.analysable) };
+    return analyses;
 }
 function createScenarioTrend(context, page, options) {
     if (options.scenario !== 'scroll' || options.startTsMs === undefined || options.endTsMs === undefined) {
@@ -2321,15 +2940,11 @@ async function loadMemoryData(traceQuery, options) {
     const traceArgs = new Map(traceBeginRows.map((row) => [toString(row['flat_key']), toString(row['display_value'])]));
     const memoryTraceEnabled = traceBegin !== undefined &&
         ['1', 'true'].includes((traceArgs.get('debug.enable_memory_trace') ?? '').toLowerCase());
-    const forceGc = ['1', 'true'].includes((traceArgs.get('debug.memory_trace_force_gc') ?? '').toLowerCase());
     const pages = buildPages(events, trackData.tracks, trackData.samples, bounds.startMs, bounds.endMs, options);
     const vms = buildVms(events, pages, bounds.startMs);
     const warnings = [];
     warnings.push(...assignBtsMemoryTracks(vms, btsMemoryTracks, bounds.endMs));
     classifyPages(pages, bounds.endMs);
-    if (!forceGc) {
-        warnings.push('当前 Trace 未开启 memory_trace_force_gc，页面退出后的回落分析仅为低置信度参考。');
-    }
     if ((options.url !== undefined || options.instanceId !== undefined) && !pages.some((page) => page.selected)) {
         warnings.push('Trace 中没有找到与用户指定 URL 或 instance_id 匹配的页面。');
     }
@@ -2353,14 +2968,13 @@ async function loadMemoryData(traceQuery, options) {
         traceStartMs: bounds.startMs,
         traceEndMs: bounds.endMs,
         memoryTraceEnabled,
-        forceGc,
         events,
         tracks: trackData.tracks,
         samples: trackData.samples,
         btsMemoryTracks,
         pages,
         vms,
-        snapshots: buildSnapshots(events, vms),
+        snapshots: buildSnapshots(events, vms, pages, btsMemoryTracks),
         gcEvents: events.filter((event) => event.name === 'RunGC'),
         pssTracks,
         poolStates,
@@ -2372,7 +2986,21 @@ async function queryVMMemory(traceQuery, request) {
     const vm = request.kind === 'mts'
         ? context.vms.find((item) => item.kind === 'mts' && item.instanceIds.includes(request.instanceId ?? -1))
         : context.vms.find((item) => item.kind === 'bts' && item.name === request.vmName && item.generation === (request.generation ?? 0));
-    return vm ? vmMemoryAt(context, vm, request.tsMs) : { accumulateBytes: 0, rssBytes: 0 };
+    if (!vm?.supportsMemory || request.tsMs < vm.createTsMs || request.tsMs > (vm.destroyTsMs ?? context.traceEndMs)) {
+        return {
+            accumulateBytes: 0,
+            rssBytes: 0,
+            available: false,
+            reason: 'VM 不存在、不支持内存上报或查询时间不在生命周期内。',
+        };
+    }
+    const sample = vm.kind === 'mts'
+        ? memorySampleAt(context, vm.instanceIds[0] ?? -1, request.tsMs)
+        : lastAt(context.btsMemoryTracks.get(vm.memoryTrackId ?? -1)?.samples ?? [], request.tsMs);
+    const memory = sample && ('memory' in sample ? sample.memory : sample.mts);
+    return memory && sample
+        ? { ...memory, available: true, sampleId: sample.id, sampleTsMs: sample.tsMs }
+        : { accumulateBytes: 0, rssBytes: 0, available: false, reason: '没有可用的源样本。' };
 }
 async function querySharedBtsLoadedPages(traceQuery, vmName, generation, tsMs) {
     const context = await loadMemoryData(traceQuery, {});
@@ -2387,7 +3015,7 @@ async function queryMemoryAnalysis(traceQuery, options = {}) {
     if (!context.memoryTraceEnabled) {
         const error = 'Trace 未开启内存数据采集。请升级 Lynx 并在录制时启用 enable_memory_trace。';
         return {
-            schemaVersion: 2,
+            schemaVersion: 4,
             valid: false,
             error,
             options,
@@ -2395,16 +3023,15 @@ async function queryMemoryAnalysis(traceQuery, options = {}) {
                 startTsMs: context.traceStartMs,
                 endTsMs: context.traceEndMs,
                 memoryTraceEnabled: false,
-                forceGc: context.forceGc,
                 processUpids,
             },
             pages: context.pages,
             vms: context.vms,
             snapshots: context.snapshots,
-            sharedBtsHeapCharts: [],
+            mtsPoolGrowthEvents: [],
+            sharedBtsSlotCharts: [],
             sharedBtsVmAnalyses: [],
-            sharedBtsLeakEvents: [],
-            analysableLeakEvents: [],
+            residualAnalyses: [],
             issues: [],
             warnings: context.warnings,
             summary: {
@@ -2415,6 +3042,9 @@ async function queryMemoryAnalysis(traceQuery, options = {}) {
                 issueCount: 0,
                 selectedInstanceIds: [],
                 conclusion: error,
+                confirmedLeakPageCount: 0,
+                suspectedPageCount: 0,
+                incompletePageCount: 0,
             },
         };
     }
@@ -2423,9 +3053,34 @@ async function queryMemoryAnalysis(traceQuery, options = {}) {
         context.warnings.push('所有 BTS 虚拟机均没有可用的 bts_vm_acc_* 内存轨道，或 VM 类型不支持内存上报。');
     }
     const issues = [];
-    analyzePageMetrics(context, issues);
-    const leakAnalysis = analyzeSharedBtsLeaks(context, issues);
-    const sharedBtsVmAnalysis = buildSharedBtsVmAnalyses(context, leakAnalysis.events, issues);
+    const mtsPoolGrowthEvents = analyzePageMetrics(context, issues);
+    const kryptonAnalyses = await (0, graphics_memory_1.queryKryptonCharts)(traceQuery, context.traceStartMs, context.traceEndMs, context.pages);
+    for (const group of kryptonAnalyses) {
+        const graphicPages = context.pages.filter((page) => page.selected &&
+            page.analysis.graphicMemoryChart &&
+            group.processUpid !== undefined &&
+            page.processUpid === group.processUpid);
+        const events = context.events.flatMap((event) => {
+            const page = graphicPages.find((p) => p.instanceId === event.instanceId);
+            if (!page || !['LynxShell::Create', 'LynxShell::~LynxShell'].includes(event.name))
+                return [];
+            return [
+                {
+                    sliceId: event.id,
+                    name: event.name,
+                    tsMs: event.name === 'LynxShell::Create' ? event.tsMs : event.endTsMs,
+                    instanceId: page.instanceId,
+                    url: page.url,
+                    btsVmName: page.btsVmName,
+                    renderMode: 'bubble',
+                },
+            ];
+        });
+        group.memoryChart.events = events;
+        group.countChart.events = events;
+    }
+    const residualAnalyses = buildResidualAnalyses(context);
+    const sharedBtsVmAnalysis = buildSharedBtsVmAnalyses(context, issues);
     for (const page of context.pages.filter((item) => item.selected)) {
         createScenarioTrend(context, page, options);
     }
@@ -2437,23 +3092,23 @@ async function queryMemoryAnalysis(traceQuery, options = {}) {
         ? `发现 ${relevantIssues.length} 个与目标页面相关的内存 issue，请查看 HTML 报告中的高亮结论。`
         : '未发现规则命中的高或中置信度内存问题，请结合 HTML 报告检查完整数据。';
     return {
-        schemaVersion: 2,
+        schemaVersion: 4,
         valid: true,
         options,
         trace: {
             startTsMs: context.traceStartMs,
             endTsMs: context.traceEndMs,
             memoryTraceEnabled: true,
-            forceGc: context.forceGc,
             processUpids,
         },
         pages: context.pages,
         vms: context.vms,
         snapshots: context.snapshots,
-        sharedBtsHeapCharts: sharedBtsVmAnalysis.charts,
+        mtsPoolGrowthEvents,
+        sharedBtsSlotCharts: sharedBtsVmAnalysis.charts,
+        kryptonAnalyses,
         sharedBtsVmAnalyses: sharedBtsVmAnalysis.analyses,
-        sharedBtsLeakEvents: leakAnalysis.events,
-        analysableLeakEvents: leakAnalysis.analysable,
+        residualAnalyses,
         issues,
         warnings: context.warnings,
         summary: {
@@ -2464,6 +3119,9 @@ async function queryMemoryAnalysis(traceQuery, options = {}) {
             issueCount: issues.length,
             selectedInstanceIds,
             conclusion,
+            confirmedLeakPageCount: 0,
+            suspectedPageCount: 0,
+            incompletePageCount: residualAnalyses.length,
         },
     };
 }
@@ -2513,6 +3171,7 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.extractMemorySnapshot = extractMemorySnapshot;
+const crypto_1 = __webpack_require__(6982);
 const fs = __importStar(__webpack_require__(9896));
 const path = __importStar(__webpack_require__(6928));
 function escapeSqlLiteral(value) {
@@ -2526,6 +3185,8 @@ async function extractMemorySnapshot(traceQuery, snapshotId, outputPath) {
     const escapedSnapshotId = escapeSqlLiteral(snapshotId);
     const metadataRows = await traceQuery.query(`
     SELECT
+      COUNT(DISTINCT s.id) capture_count,
+      MAX(CASE WHEN a.flat_key = 'debug.id' THEN a.display_value END) scope_id,
       MAX(CASE WHEN a.flat_key = 'debug.total_length' THEN a.display_value END) total_length,
       MAX(CASE WHEN a.flat_key = 'debug.chunk_count' THEN a.display_value END) chunk_count
     FROM slice s
@@ -2540,6 +3201,11 @@ async function extractMemorySnapshot(traceQuery, snapshotId, outputPath) {
       )
   `);
     const metadata = metadataRows[0];
+    if (toNumber(metadata?.['capture_count']) !== 1) {
+        throw new Error(`Snapshot ID must identify exactly one capture: ${snapshotId}`);
+    }
+    if (!metadata?.['scope_id'])
+        throw new Error(`Snapshot capture has no scope ID: ${snapshotId}`);
     const declaredLength = toNumber(metadata?.['total_length']);
     const declaredChunkCount = toNumber(metadata?.['chunk_count']);
     if (declaredChunkCount === 0) {
@@ -2547,9 +3213,10 @@ async function extractMemorySnapshot(traceQuery, snapshotId, outputPath) {
     }
     const chunkRows = await traceQuery.query(`
     SELECT
-      CAST(chunk_index.string_value AS INT) chunk_index,
-      CAST(COALESCE(chunk_offset.string_value, '0') AS INT) chunk_offset,
+      CAST(COALESCE(chunk_index.int_value, chunk_index.string_value) AS INT) chunk_index,
+      CAST(COALESCE(chunk_offset.int_value, chunk_offset.string_value) AS INT) chunk_offset,
       content.string_value content
+      , scope.display_value scope_id
     FROM slice s
     JOIN args snapshot_arg
       ON snapshot_arg.arg_set_id = s.arg_set_id
@@ -2563,16 +3230,42 @@ async function extractMemorySnapshot(traceQuery, snapshotId, outputPath) {
     JOIN args content
       ON content.arg_set_id = s.arg_set_id
       AND content.flat_key = 'debug.content'
+    LEFT JOIN args scope
+      ON scope.arg_set_id = s.arg_set_id AND scope.flat_key = 'debug.id'
     WHERE s.name = 'snapshot_chunk'
       AND snapshot_arg.string_value = '${escapedSnapshotId}'
-    ORDER BY CAST(chunk_index.string_value AS INT), CAST(COALESCE(chunk_offset.string_value, '0') AS INT)
+    ORDER BY chunk_index, chunk_offset
   `);
     if (chunkRows.length !== declaredChunkCount) {
         throw new Error(`Snapshot chunk count mismatch for ${snapshotId}: expected ${declaredChunkCount}, got ${chunkRows.length}`);
     }
-    const content = chunkRows.map((row) => String(row['content'] ?? '')).join('');
-    if (content.length !== declaredLength) {
-        throw new Error(`Snapshot length mismatch for ${snapshotId}: expected ${declaredLength}, got ${content.length}`);
+    let byteOffset = 0;
+    const content = chunkRows
+        .map((row, index) => {
+        if (row['scope_id'] !== metadata?.['scope_id'])
+            throw new Error(`Snapshot chunk scope mismatch: ${snapshotId}`);
+        if (row['chunk_index'] === null ||
+            row['chunk_index'] === undefined ||
+            toNumber(row['chunk_index']) !== index ||
+            (row['chunk_offset'] !== null &&
+                row['chunk_offset'] !== undefined &&
+                toNumber(row['chunk_offset']) !== byteOffset)) {
+            throw new Error(`Snapshot chunk index or byte offset mismatch for ${snapshotId}, chunk ${index}`);
+        }
+        const chunk = String(row['content'] ?? '');
+        byteOffset += Buffer.byteLength(chunk, 'utf8');
+        return chunk;
+    })
+        .join('');
+    if (byteOffset !== declaredLength) {
+        throw new Error(`Snapshot length mismatch for ${snapshotId}: expected ${declaredLength}, got ${byteOffset}`);
+    }
+    const parsed = JSON.parse(content);
+    if (!parsed.snapshot?.meta ||
+        !Array.isArray(parsed.nodes) ||
+        !Array.isArray(parsed.edges) ||
+        !Array.isArray(parsed.strings)) {
+        throw new Error(`Invalid heap snapshot structure: ${snapshotId}`);
     }
     const resolvedOutputPath = path.resolve(outputPath);
     fs.mkdirSync(path.dirname(resolvedOutputPath), { recursive: true });
@@ -2581,7 +3274,8 @@ async function extractMemorySnapshot(traceQuery, snapshotId, outputPath) {
         snapshotId,
         outputPath: resolvedOutputPath,
         chunkCount: chunkRows.length,
-        totalLength: content.length,
+        totalLength: byteOffset,
+        sha256: (0, crypto_1.createHash)('sha256').update(content).digest('hex'),
     };
 }
 //# sourceMappingURL=query_memory_snapshot.js.map
@@ -3308,6 +4002,1050 @@ async function queryTraceMetadata(traceQuery) {
 
 /***/ },
 
+/***/ 8078
+(__unused_webpack_module, exports, __webpack_require__) {
+
+
+// Copyright 2026 The Lynx Authors. All rights reserved.
+// Licensed under the Apache License Version 2.0.
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.FrontendSourceResolver = void 0;
+exports.prepareFrontend = prepareFrontend;
+exports.readLynxSources = readLynxSources;
+exports.combineSources = combineSources;
+exports.readFrontend = readFrontend;
+exports.confirmFrontend = confirmFrontend;
+exports.generatedPosition = generatedPosition;
+const child_process_1 = __webpack_require__(5317);
+const crypto_1 = __webpack_require__(6982);
+const fs = __importStar(__webpack_require__(9896));
+const path = __importStar(__webpack_require__(6928));
+const url_1 = __webpack_require__(7016);
+const source_map_js_1 = __webpack_require__(2427);
+const acorn_1 = __webpack_require__(4359);
+const lynx_source_selection_1 = __webpack_require__(8801);
+const hash = (value) => (0, crypto_1.createHash)('sha256').update(value).digest('hex');
+const SOURCE_CACHE_VERSION = 7;
+const hashFile = (file) => hash(fs.readFileSync(file));
+const git = (root, args) => (0, child_process_1.execFileSync)('git', ['-C', root, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+function contained(root, file) {
+    const relative = path.relative(root, file);
+    return relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+}
+function filesIn(directory) {
+    if (!fs.existsSync(directory) || !fs.statSync(directory).isDirectory()) {
+        throw new Error(`Frontend output directory is missing: ${directory}`);
+    }
+    return fs
+        .readdirSync(directory, { withFileTypes: true })
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .flatMap((entry) => {
+        const file = path.join(directory, entry.name);
+        return entry.isDirectory() ? filesIn(file) : entry.isFile() ? [file] : [];
+    });
+}
+/** Build machines often embed absolute paths. Require a unique suffix and matching content. */
+function findSource(root, source, expected, mapFile) {
+    let normalized;
+    try {
+        normalized = source.startsWith('file:') ? (0, url_1.fileURLToPath)(source) : decodeURIComponent(source);
+    }
+    catch {
+        return undefined;
+    }
+    const segments = normalized.replace(/\\/g, '/').split('/').filter(Boolean);
+    const matches = new Set();
+    if (mapFile) {
+        const candidate = path.resolve(path.dirname(mapFile), normalized);
+        if (contained(root, candidate) && fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
+            const real = fs.realpathSync(candidate);
+            // A workspace symlink may traverse node_modules but resolve to tracked repository source.
+            // Installed dependencies remain excluded, even when their store lives under the root.
+            if (contained(root, real) &&
+                !path.relative(root, real).split(path.sep).includes('node_modules') &&
+                (expected == null || fs.readFileSync(real, 'utf8') === expected))
+                matches.add(real);
+        }
+    }
+    // Maps acquired separately still refer to their original build layout (e.g. ../src/App.tsx).
+    // Rebase only leading traversal; every candidate must remain inside the specified source root.
+    while (segments[0] === '..' || segments[0] === '.')
+        segments.shift();
+    if (segments.includes('..') || segments.includes('node_modules'))
+        return matches.size === 1 ? [...matches][0] : undefined;
+    for (let start = 0; start < segments.length; start++) {
+        const candidate = path.resolve(root, ...segments.slice(start));
+        if (!contained(root, candidate) || !fs.existsSync(candidate) || !fs.statSync(candidate).isFile())
+            continue;
+        const real = fs.realpathSync(candidate);
+        if (!contained(root, real) || path.relative(root, real).split(path.sep).includes('node_modules'))
+            continue;
+        if (expected !== undefined && expected !== null && fs.readFileSync(real, 'utf8') !== expected)
+            continue;
+        matches.add(real);
+    }
+    return matches.size === 1 ? [...matches][0] : undefined;
+}
+/** Inline maps belong to the unchanged generated script; never strip their data URL. */
+function loadSourceMap(script, explicitMap) {
+    if (explicitMap)
+        return { raw: JSON.parse(fs.readFileSync(explicitMap, 'utf8')), file: explicitMap };
+    const text = fs.readFileSync(script, 'utf8');
+    const inline = /\/\/[#@]\s*sourceMappingURL=(data:application\/json[^\r\n]*)\s*$/.exec(text)?.[1];
+    if (inline) {
+        const comma = inline.indexOf(',');
+        const payload = inline.slice(comma + 1).trim();
+        const json = inline.slice(0, comma).includes(';base64')
+            ? Buffer.from(payload, 'base64').toString('utf8')
+            : decodeURIComponent(payload);
+        return { raw: JSON.parse(json), file: script, inlineMap: true };
+    }
+    const file = `${script}.map`;
+    return fs.existsSync(file) ? { raw: JSON.parse(fs.readFileSync(file, 'utf8')), file } : undefined;
+}
+function manifestDigest(manifest) {
+    return hash(JSON.stringify({
+        version: manifest.version,
+        projects: manifest.projects,
+        artifacts: manifest.artifacts,
+        warnings: manifest.warnings,
+    }));
+}
+function prepareFrontend(config, base) {
+    if (config.version !== 1 || !Array.isArray(config.projects) || !config.projects.length) {
+        throw new Error('Expected frontend config version 1 with at least one project.');
+    }
+    const projects = [];
+    const artifacts = [];
+    const warnings = [];
+    const ids = new Set();
+    for (const input of config.projects) {
+        if (!input.id || ids.has(input.id))
+            throw new Error('Frontend project IDs must be nonempty and unique.');
+        ids.add(input.id);
+        if (input.abandoned) {
+            if (input.abandoned.userConfirmed !== true || !input.abandoned.reason?.trim()) {
+                throw new Error(`Abandoning ${input.id} requires the user's explicit agreement and reason.`);
+            }
+            projects.push(input);
+            continue;
+        }
+        if (!input.root || (input.origin && !['local', 'git'].includes(input.origin.kind))) {
+            throw new Error(`Frontend project ${input.id} requires a root and a valid origin kind.`);
+        }
+        const root = fs.realpathSync(path.resolve(base, input.root));
+        if (input.artifactFiles !== undefined) {
+            if (input.lynx ||
+                !Array.isArray(input.artifactFiles) ||
+                !input.artifactFiles.length ||
+                input.artifactFiles.some((file) => !file ||
+                    typeof file.script !== 'string' ||
+                    !file.script.trim() ||
+                    (file.map !== undefined && (typeof file.map !== 'string' || !file.map.trim())))) {
+                throw new Error(`Explicit frontend artifactFiles require nonempty script paths: ${input.id}`);
+            }
+        }
+        if (input.artifactOrigin &&
+            (!['local', 'git', 'url'].includes(input.artifactOrigin.kind) ||
+                !input.artifactOrigin.locator?.trim() ||
+                (input.artifactOrigin.kind === 'git' && !input.artifactOrigin.ref?.trim()))) {
+            throw new Error(`Invalid artifact acquisition provenance: ${input.id}`);
+        }
+        if (input.lynx) {
+            const { selection, consent, statement, platform } = input.lynx;
+            if (consent !== 'user-specified' &&
+                selection.kind === 'version' &&
+                (0, lynx_source_selection_1.traceLynxVersionInvalidReason)(selection.requested)) {
+                throw new Error(`Invalid Trace-derived Lynx version ${selection.requested}; minimum is ${lynx_source_selection_1.MINIMUM_TRACE_LYNX_VERSION}. Treat it as a missing tag even if the tag exists and request source/revision input.`);
+            }
+            const requested = (0, lynx_source_selection_1.requestedLynxSource)({
+                lynxVersion: selection.kind === 'version' ? selection.requested : undefined,
+                lynxVersionRef: selection.kind === 'version' ? selection.ref : undefined,
+                lynxCommit: selection.kind === 'commit' ? selection.requested : undefined,
+                lynxBranch: selection.kind === 'branch' ? selection.requested : undefined,
+            });
+            if (!requested ||
+                requested.ref !== selection.ref ||
+                !['user-specified', 'trace-version-resolved', 'trace-version-approved'].includes(consent) ||
+                !statement?.trim() ||
+                !platform?.trim() ||
+                (consent !== 'user-specified' && selection.kind !== 'version') ||
+                input.origin?.kind !== 'git' ||
+                !(0, lynx_source_selection_1.isLynxSourceRepository)(input.origin.url ?? '') ||
+                input.origin.ref !== selection.ref) {
+                throw new Error(`Invalid Lynx revision, source provenance or origin for ${input.id}.`);
+            }
+        }
+        else if (input.scriptAliases) {
+            throw new Error('Runtime script aliases require Lynx build provenance.');
+        }
+        const project = {
+            ...input,
+            root,
+            outputDirs: input.artifactFiles ? [] : (input.outputDirs ?? ['dist']).map((dir) => path.resolve(root, dir)),
+            ...(input.artifactFiles
+                ? {
+                    artifactFiles: input.artifactFiles.map((file) => ({
+                        script: path.resolve(base, file.script),
+                        ...(file.map ? { map: path.resolve(base, file.map) } : {}),
+                    })),
+                }
+                : {}),
+        };
+        if (input.origin?.kind === 'git') {
+            if (!input.origin.url || !input.origin.ref)
+                throw new Error(`Git project ${input.id} requires URL and ref.`);
+            if (fs.realpathSync(git(root, ['rev-parse', '--show-toplevel'])) !== root) {
+                throw new Error(`${root} must be the requested repository root.`);
+            }
+            if ((0, lynx_source_selection_1.canonicalRepositoryUrl)(git(root, ['remote', 'get-url', 'origin'])) !== (0, lynx_source_selection_1.canonicalRepositoryUrl)(input.origin.url)) {
+                throw new Error(`Git origin does not match the requested URL: ${input.id}`);
+            }
+            project.commit = git(root, ['rev-parse', 'HEAD']);
+            const requested = git(root, ['rev-parse', '--verify', `${input.origin.ref}^{commit}`]);
+            if (requested !== project.commit)
+                throw new Error(`Checkout does not match requested ref: ${input.id}`);
+            if (!input.lynx && git(root, ['status', '--porcelain', '--untracked-files=no'])) {
+                throw new Error(`Git project ${input.id} has tracked changes; remote source links would be inaccurate.`);
+            }
+        }
+        projects.push(project);
+        let count = 0;
+        const entries = project.artifactFiles ??
+            [...new Set(project.outputDirs.flatMap(filesIn).filter((file) => /\.(?:c|m)?js$/.test(file)))].map((script) => ({
+                script,
+                map: undefined,
+            }));
+        if (new Set(entries.map((entry) => entry.script)).size !== entries.length) {
+            throw new Error(`Duplicate generated script in artifactFiles: ${input.id}`);
+        }
+        for (const { script, map } of entries) {
+            const loaded = loadSourceMap(script, map);
+            if (!loaded) {
+                if (!project.artifactFiles)
+                    continue;
+                if (!fs.statSync(script).size)
+                    throw new Error(`Empty generated script: ${script}`);
+                artifacts.push({ projectId: input.id, script, scriptSha256: hashFile(script), sources: {} });
+                warnings.push(`${input.id}: no sourcemap for ${script}; generated JavaScript locations only.`);
+                count++;
+                continue;
+            }
+            const { raw, file: mapFile, inlineMap } = loaded;
+            if (Number(raw.version) !== 3 || !raw.mappings || !Array.isArray(raw.sources)) {
+                throw new Error(`Invalid or empty source map: ${mapFile}`);
+            }
+            if (!fs.statSync(script).size)
+                throw new Error(`Empty generated script: ${script}`);
+            const consumer = new source_map_js_1.SourceMapConsumer(raw);
+            // Decode the entire mapping now; lazy parse failures must block preparation.
+            consumer.eachMapping(() => { });
+            if (raw.file && path.basename(raw.file) !== path.basename(script)) {
+                warnings.push(`${input.id}: map.file=${raw.file} differs from ${path.basename(script)}; verify the build pair.`);
+            }
+            const sources = {};
+            for (const source of consumer.sources) {
+                const file = findSource(root, source, consumer.sourceContentFor(source, true), mapFile);
+                if (!file)
+                    continue;
+                const sha256 = hashFile(file);
+                let tracked = false;
+                if (project.commit) {
+                    try {
+                        const committed = (0, child_process_1.execFileSync)('git', ['-C', root, 'show', `${project.commit}:${path.relative(root, file)}`], {
+                            stdio: ['ignore', 'pipe', 'pipe'],
+                        });
+                        tracked = hash(committed) === sha256;
+                    }
+                    catch {
+                        /* Generated, changed or unavailable committed content has no remote permalink. */
+                    }
+                }
+                sources[source] = { file, sha256, tracked };
+            }
+            artifacts.push({
+                projectId: input.id,
+                script,
+                map: mapFile,
+                ...(inlineMap ? { inlineMap } : {}),
+                scriptSha256: hashFile(script),
+                mapSha256: hashFile(mapFile),
+                sources,
+            });
+            count++;
+        }
+        if (!count)
+            throw new Error(`No nonempty JS + v3 sourcemap pairs found for ${input.id}. Build with sourcemaps first.`);
+        for (const script of Object.keys(input.scriptAliases ?? {})) {
+            if (!artifacts.some((artifact) => artifact.projectId === input.id && path.basename(artifact.script) === script)) {
+                throw new Error(`Declared runtime script has no validated JS + sourcemap pair: ${input.id}/${script}`);
+            }
+        }
+    }
+    const manifest = { version: 1, projects, artifacts, warnings };
+    return { ...manifest, digest: manifestDigest(manifest) };
+}
+function readLynxSources(file) {
+    const manifest = readFrontend(file);
+    if (!manifest.artifacts.length || manifest.projects.some((project) => !project.lynx || project.abandoned)) {
+        throw new Error('A Lynx manifest must contain only built Lynx projects with source provenance.');
+    }
+    return manifest;
+}
+/** Keep frontend and runtime preparation records independent while resolving sources together. */
+function combineSources(frontend, lynx) {
+    if (!frontend || !lynx)
+        return frontend ?? lynx;
+    const projects = [...frontend.projects, ...lynx.projects];
+    if (new Set(projects.map((project) => project.id)).size !== projects.length) {
+        throw new Error('Frontend and Lynx project IDs must be distinct.');
+    }
+    const combined = {
+        version: 1,
+        projects,
+        artifacts: [...frontend.artifacts, ...lynx.artifacts],
+        warnings: [...frontend.warnings, ...lynx.warnings],
+    };
+    return { ...combined, digest: manifestDigest(combined) };
+}
+function readFrontend(file) {
+    const manifest = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (manifest.version !== 1 || manifest.digest !== manifestDigest(manifest)) {
+        throw new Error('Frontend manifest was changed. Run frontend-prepare again.');
+    }
+    const current = prepareFrontend({ version: 1, projects: manifest.projects }, path.dirname(file));
+    if (current.digest !== manifest.digest) {
+        throw new Error('Frontend artifacts or sources changed. Run frontend-prepare again before analysis.');
+    }
+    return manifest;
+}
+function confirmFrontend(file, digest, statement) {
+    const manifest = readFrontend(file);
+    if (digest !== manifest.digest || !statement.trim())
+        throw new Error('Exact artifact digest and user confirmation are required.');
+    manifest.confirmation = { digest, statement, at: new Date().toISOString() };
+    fs.writeFileSync(file, JSON.stringify(manifest, null, 2));
+    return manifest;
+}
+/** PrimJS offsets count UTF-8 bytes; sourcemap columns count UTF-16 code units. */
+function generatedPosition(script, offset) {
+    if (!Number.isSafeInteger(offset) || offset < 0 || offset > script.length)
+        throw new Error('Invalid source_offset.');
+    if (offset < script.length && (script[offset] & 0xc0) === 0x80)
+        throw new Error('source_offset splits a UTF-8 character.');
+    const prefix = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(script.subarray(0, offset));
+    const lines = prefix.split(/\r\n|\r|\n|\u2028|\u2029/);
+    return { line: lines.length, column: lines[lines.length - 1].length };
+}
+/** Bounded context around a validated UTF-8 byte boundary, without splitting code points. */
+function generatedSnippet(script, offset) {
+    const beforeLimit = 80;
+    const afterLimit = 160;
+    let start = Math.max(0, offset - beforeLimit * 4);
+    let end = Math.min(script.length, offset + afterLimit * 4);
+    while (start < offset && (script[start] & 0xc0) === 0x80)
+        start++;
+    while (end < script.length && (script[end] & 0xc0) === 0x80)
+        end--;
+    const before = Array.from(script.subarray(start, offset).toString('utf8')).slice(-beforeLimit).join('');
+    const after = Array.from(script.subarray(offset, end).toString('utf8')).slice(0, afterLimit).join('');
+    return {
+        before,
+        after,
+        truncatedBefore: Buffer.byteLength(before) < offset,
+        truncatedAfter: offset + Buffer.byteLength(after) < script.length,
+    };
+}
+function sourceUrl(project, file, line, column) {
+    if (project.origin?.kind !== 'git')
+        return `${(0, url_1.pathToFileURL)(file.file).href}#L${line}:${column}`;
+    if (!project.commit || !file.tracked)
+        return undefined;
+    const relative = path.relative(project.root, file.file).split(path.sep).map(encodeURIComponent).join('/');
+    const repo = (0, lynx_source_selection_1.canonicalRepositoryUrl)(project.origin.url);
+    if (project.origin.linkTemplate) {
+        const values = {
+            repo,
+            commit: project.commit,
+            ref: encodeURIComponent(project.origin.ref),
+            path: relative,
+            line: String(line),
+            column: String(column),
+        };
+        const url = project.origin.linkTemplate.replace(/\{(\w+)\}/g, (_, key) => values[key] ?? '');
+        return /^https?:\/\//.test(url) ? url : undefined;
+    }
+    if (/^https:\/\/github\.com\//.test(repo))
+        return `${repo}/blob/${project.commit}/${relative}#L${line}`;
+    if (/^https:\/\/[^/]*gitlab[^/]*\//.test(repo))
+        return `${repo}/-/blob/${project.commit}/${relative}#L${line}`;
+    return undefined;
+}
+class FrontendSourceResolver {
+    constructor(manifest, cachePath) {
+        this.manifest = manifest;
+        this.cachePath = cachePath;
+        this.consumers = new Map();
+        this.scripts = new Map();
+        this.functionOffsets = new Map();
+        this.hits = 0;
+        this.misses = 0;
+        let cache;
+        try {
+            cache = JSON.parse(fs.readFileSync(cachePath, 'utf8'));
+        }
+        catch {
+            /* First render. */
+        }
+        this.cache = cache?.version === SOURCE_CACHE_VERSION && cache.digest === manifest.digest ? cache.entries : {};
+    }
+    candidates(name) {
+        return this.manifest.artifacts.filter((artifact) => {
+            const project = this.manifest.projects.find((item) => item.id === artifact.projectId);
+            if (project.scriptPrefixes?.length && !project.scriptPrefixes.some((prefix) => name.startsWith(prefix)))
+                return false;
+            const names = project.scriptAliases?.[path.basename(artifact.script)] ?? [path.basename(artifact.script)];
+            return names.some((alias) => name === alias || name.endsWith(`/${alias}`));
+        });
+    }
+    script(artifact) {
+        if (!this.scripts.has(artifact.script))
+            this.scripts.set(artifact.script, fs.readFileSync(artifact.script));
+        return this.scripts.get(artifact.script);
+    }
+    offsets(artifact) {
+        if (!this.functionOffsets.has(artifact.script)) {
+            const text = this.script(artifact).toString('utf8');
+            const ast = (0, acorn_1.parse)(text, { ecmaVersion: 'latest', sourceType: 'script' });
+            const starts = new Set();
+            const visit = (node) => {
+                if (!node || typeof node !== 'object')
+                    return;
+                // PrimJS points class constructors at the `class` token, including synthesized constructors.
+                if ([
+                    'FunctionDeclaration',
+                    'FunctionExpression',
+                    'ArrowFunctionExpression',
+                    'ClassDeclaration',
+                    'ClassExpression',
+                ].includes(node.type)) {
+                    starts.add(node.start);
+                }
+                if ((node.type === 'Property' && node.method) || node.type === 'MethodDefinition') {
+                    starts.add(node.start);
+                    starts.add(node.key.start); // Static method locations omit the `static` keyword.
+                }
+                for (const value of Object.values(node)) {
+                    if (Array.isArray(value))
+                        value.forEach(visit);
+                    else if (value && typeof value === 'object')
+                        visit(value);
+                }
+            };
+            visit(ast);
+            const bytes = new Set();
+            let previous = 0;
+            let offset = 0;
+            for (const start of [...starts].sort((a, b) => a - b)) {
+                offset += Buffer.byteLength(text.slice(previous, start));
+                bytes.add(offset);
+                previous = start;
+            }
+            this.functionOffsets.set(artifact.script, bytes);
+        }
+        return this.functionOffsets.get(artifact.script);
+    }
+    resolve(location, runtime) {
+        // Runtime decisions are snapshot-scoped, including failure/ambiguity. Never reuse a decision
+        // from another snapshot solely because script IDs and one offset happen to coincide.
+        const key = hash(JSON.stringify([location, runtime?.selected ?? runtime?.error]));
+        const cached = this.cache[key];
+        if (cached) {
+            this.hits++;
+            return cached;
+        }
+        this.misses++;
+        const result = { ...location };
+        try {
+            const name = location.script.replace(/[?#].*$/, '');
+            if (runtime?.error)
+                throw new Error(runtime.error);
+            const candidates = this.candidates(name).filter((artifact) => !runtime || artifact.script === runtime.selected);
+            if (candidates.length !== 1)
+                throw new Error(candidates.length
+                    ? 'Ambiguous script: multiple frontend projects match. Set scriptPrefixes.'
+                    : 'No matching frontend artifact.');
+            const artifact = candidates[0];
+            const project = this.manifest.projects.find((item) => item.id === artifact.projectId);
+            result.projectId = project.id;
+            const script = this.script(artifact);
+            const generated = location.offset === undefined
+                ? { line: location.generatedLine, column: location.generatedColumn }
+                : generatedPosition(script, location.offset);
+            if (location.offset === undefined) {
+                const line = script.toString('utf8').split(/\r\n|\r|\n|\u2028|\u2029/)[generated.line - 1];
+                if (!Number.isSafeInteger(generated.line) ||
+                    !Number.isSafeInteger(generated.column) ||
+                    generated.column < 0 ||
+                    line === undefined ||
+                    generated.column > line.length) {
+                    throw new Error('Invalid generated source position.');
+                }
+            }
+            result.generatedLine = generated.line;
+            result.generatedColumn = generated.column;
+            result.generatedUrl = `${(0, url_1.pathToFileURL)(artifact.script).href}#L${generated.line}:${generated.column + 1}`;
+            // Keep both source layers; invalid offsets never produce a generated excerpt.
+            if (location.offset !== undefined) {
+                result.generatedSnippet = generatedSnippet(script, location.offset);
+            }
+            if (!artifact.map)
+                throw new Error('No sourcemap supplied; generated JavaScript location only.');
+            if (!this.consumers.has(artifact.map)) {
+                this.consumers.set(artifact.map, new source_map_js_1.SourceMapConsumer(loadSourceMap(artifact.script, artifact.inlineMap ? undefined : artifact.map).raw));
+            }
+            const consumer = this.consumers.get(artifact.map);
+            const original = consumer.originalPositionFor(generated);
+            if (!original.source || original.line === null || original.column === null)
+                throw new Error('No source mapping for this position.');
+            const file = artifact.sources[original.source];
+            if (!file)
+                throw new Error(`Original source is absent, ambiguous or differs from sourcesContent: ${original.source}`);
+            const content = fs.readFileSync(file.file, 'utf8');
+            const lines = content.split(/\r\n|\r|\n/);
+            if (original.line < 1 || original.line > lines.length || original.column > lines[original.line - 1].length) {
+                throw new Error('Mapped source position is outside the original file.');
+            }
+            result.file = project.origin?.kind === 'git' ? path.relative(project.root, file.file) : file.file;
+            result.line = original.line;
+            result.column = original.column + 1;
+            result.url = sourceUrl(project, file, result.line, result.column);
+            result.snippetStartLine = Math.max(1, original.line - 2);
+            result.snippet = lines.slice(result.snippetStartLine - 1, original.line + 2).join('\n');
+            if (!result.url && project.origin?.kind === 'git')
+                result.error =
+                    'Source located; a remote link requires matching committed file bytes and a supported repository link format.';
+        }
+        catch (error) {
+            result.error = error instanceof Error ? error.message : String(error);
+        }
+        this.cache[key] = result;
+        return result;
+    }
+    snapshot(content) {
+        const data = JSON.parse(content);
+        const meta = data.snapshot?.meta;
+        const fields = meta?.location_fields ?? [];
+        const nodeFields = meta?.node_fields ?? [];
+        const width = nodeFields.length;
+        const objectField = fields.indexOf('object_index');
+        const scriptField = fields.indexOf('script_id');
+        const offsetField = fields.indexOf('source_offset');
+        const lineField = fields.indexOf('line');
+        const columnField = fields.indexOf('column');
+        const nodes = {};
+        const locations = width && objectField >= 0 && scriptField >= 0 && Array.isArray(data.locations) ? data.locations : [];
+        const scripts = new Map();
+        const sourceTable = data.primjs_sources;
+        if (sourceTable?.version === 1 && Array.isArray(sourceTable.fields) && Array.isArray(sourceTable.scripts)) {
+            const idField = sourceTable.fields.indexOf('script_id');
+            const nameField = sourceTable.fields.indexOf('name');
+            if (idField >= 0 && nameField >= 0) {
+                for (let i = 0; i + sourceTable.fields.length <= sourceTable.scripts.length; i += sourceTable.fields.length) {
+                    const id = sourceTable.scripts[i + idField];
+                    const name = data.strings?.[sourceTable.scripts[i + nameField]];
+                    if (Number.isSafeInteger(id) && id >= 0 && typeof name === 'string')
+                        scripts.set(id, name);
+                }
+            }
+        }
+        const runtimeMatches = {};
+        for (const [id, name] of scripts) {
+            const candidates = this.candidates(name.replace(/[?#].*$/, ''));
+            if (!candidates.some((artifact) => this.manifest.projects.find((project) => project.id === artifact.projectId)?.lynx))
+                continue;
+            const offsets = new Set();
+            let records = 0;
+            for (let i = 0; i < locations.length && i + fields.length <= locations.length; i += fields.length) {
+                if (locations[i + scriptField] === id) {
+                    records++;
+                    if (offsetField >= 0)
+                        offsets.add(locations[i + offsetField]);
+                }
+            }
+            if (!records)
+                continue; // An unused script-table entry has no locations to resolve.
+            const evidence = candidates.map((artifact) => {
+                let matched = 0;
+                try {
+                    matched = [...offsets].filter((offset) => this.offsets(artifact).has(offset)).length;
+                }
+                catch {
+                    /* Unsupported JS cannot prove a match. */
+                }
+                return {
+                    script: artifact.script,
+                    sha256: artifact.scriptSha256,
+                    bytes: this.script(artifact).length,
+                    matched,
+                    total: offsets.size,
+                };
+            });
+            const valid = evidence.filter((candidate) => candidate.total >= 3 && candidate.matched === candidate.total);
+            runtimeMatches[id] = {
+                candidates: evidence,
+                ...(valid.length === 1
+                    ? { selected: valid[0].script }
+                    : {
+                        error: valid.length > 1
+                            ? 'Ambiguous Lynx runtime variant: multiple builds match snapshot function offsets.'
+                            : 'Lynx runtime build does not match all snapshot function offsets (at least three required).',
+                    }),
+            };
+        }
+        const locatedScripts = new Set();
+        for (let i = 0; i < locations.length && i + fields.length <= locations.length; i += fields.length) {
+            const index = locations[i + objectField] / width;
+            if (!Number.isSafeInteger(index) || index < 0 || index >= data.snapshot.node_count)
+                continue;
+            // Location metadata applies to code/bytecode nodes too. Shared positions
+            // reuse the same cache entry regardless of the heap object's type.
+            const scriptId = locations[i + scriptField];
+            const script = scripts.get(scriptId) ?? `script_id:${scriptId}`;
+            if (!Number.isSafeInteger(scriptId) || scriptId < 0)
+                continue;
+            scripts.set(scriptId, script);
+            const location = { script, scriptId };
+            if (offsetField >= 0)
+                location.offset = locations[i + offsetField];
+            else if (lineField >= 0 && columnField >= 0) {
+                location.generatedLine = locations[i + lineField] + 1;
+                location.generatedColumn = locations[i + columnField];
+            }
+            else
+                continue;
+            nodes[index] = this.resolve(location, runtimeMatches[scriptId]);
+            locatedScripts.add(scriptId);
+        }
+        const bindings = {};
+        for (const [id, script] of scripts) {
+            const candidates = this.candidates(script.replace(/[?#].*$/, '')).map(({ projectId, script }) => ({
+                projectId,
+                script,
+            }));
+            const runtime = runtimeMatches[id];
+            const eligible = candidates.filter((candidate) => !runtime || candidate.script === runtime.selected);
+            bindings[id] = {
+                script,
+                candidates,
+                ...(locatedScripts.has(id) && eligible.length === 1 ? { selected: eligible[0] } : {}),
+            };
+        }
+        return {
+            nodes,
+            ...(Object.keys(bindings).length ? { bindings } : {}),
+            ...(Object.keys(runtimeMatches).length ? { runtimeMatches } : {}),
+        };
+    }
+    save() {
+        const temporary = `${this.cachePath}.${process.pid}.tmp`;
+        fs.writeFileSync(temporary, JSON.stringify({ version: SOURCE_CACHE_VERSION, digest: this.manifest.digest, entries: this.cache }));
+        fs.renameSync(temporary, this.cachePath);
+    }
+}
+exports.FrontendSourceResolver = FrontendSourceResolver;
+//# sourceMappingURL=frontend_sources.js.map
+
+/***/ },
+
+/***/ 8801
+(__unused_webpack_module, exports) {
+
+
+// Copyright 2026 The Lynx Authors. All rights reserved.
+// Licensed under the Apache License Version 2.0.
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.MINIMUM_TRACE_LYNX_VERSION = exports.LYNX_SOURCE_REPOSITORIES = void 0;
+exports.traceLynxVersionInvalidReason = traceLynxVersionInvalidReason;
+exports.canonicalRepositoryUrl = canonicalRepositoryUrl;
+exports.isLynxSourceRepository = isLynxSourceRepository;
+exports.requestedLynxSource = requestedLynxSource;
+exports.queryLynxEngineVersions = queryLynxEngineVersions;
+exports.LYNX_SOURCE_REPOSITORIES = [
+    { kind: 'internal', url: 'https://code.byted.org/lynx/template-assembler', sourceRoot: 'lynx/' },
+    { kind: 'oss', url: 'https://github.com/lynx-family/lynx.git', sourceRoot: './' },
+];
+const TRACE_LYNX_VERSION_FLOOR = [4, 5, 0];
+exports.MINIMUM_TRACE_LYNX_VERSION = TRACE_LYNX_VERSION_FLOOR.join('.');
+/** Only Trace-derived versions use this floor; explicit source selections remain authoritative. */
+function traceLynxVersionInvalidReason(version) {
+    const match = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.exec(version);
+    if (!match)
+        return 'invalid-format';
+    const parts = [Number(match[1]), Number(match[2]), Number(match[3])];
+    if (!parts.every(Number.isSafeInteger) || match[4]?.split('.').some((part) => /^0\d+$/.test(part)))
+        return 'invalid-format';
+    for (const index of [0, 1, 2]) {
+        if (parts[index] < TRACE_LYNX_VERSION_FLOOR[index])
+            return 'below-minimum';
+        if (parts[index] > TRACE_LYNX_VERSION_FLOOR[index])
+            return undefined;
+    }
+    // A prerelease of 4.5.0 precedes the supported 4.5.0 release.
+    return match[4] ? 'below-minimum' : undefined;
+}
+/** Compare supported Git transports without changing the recorded or fetched URL. */
+function canonicalRepositoryUrl(url) {
+    return url
+        .replace(/^git@([^/:]+):/, 'https://$1/')
+        .replace(/^ssh:\/\/git@([^/:]+)(?::22)?\//, 'https://$1/')
+        .replace(/\.git\/?$/, '')
+        .replace(/\/$/, '');
+}
+function isLynxSourceRepository(url) {
+    return exports.LYNX_SOURCE_REPOSITORIES.some((repository) => canonicalRepositoryUrl(repository.url) === canonicalRepositoryUrl(url));
+}
+/** An explicit user selection wins without consulting possibly local-build Trace metadata. */
+function requestedLynxSource(options) {
+    const selections = [
+        options.lynxVersion && { kind: 'version', requested: options.lynxVersion },
+        options.lynxCommit && { kind: 'commit', requested: options.lynxCommit },
+        options.lynxBranch && { kind: 'branch', requested: options.lynxBranch },
+    ].filter((selection) => !!selection);
+    if (selections.length > 1)
+        throw new Error('Specify only one Lynx version, commit or branch.');
+    const selected = selections[0];
+    if (options.lynxVersionRef !== undefined && selected?.kind !== 'version') {
+        throw new Error('A Lynx version ref requires --lynx-version.');
+    }
+    if (!selected)
+        return undefined;
+    const requested = selected.requested.trim();
+    const ref = selected.kind === 'version' ? (options.lynxVersionRef ?? `A_${requested}`).trim() : requested;
+    if ([requested, ref].some((value) => !value || value.startsWith('-') || /[\s~^:?*[\\]/.test(value))) {
+        throw new Error('Invalid Lynx source revision.');
+    }
+    return { ...selected, requested, ref };
+}
+/** This is a preparatory version query, not a memory analysis. Preserve multiple recorded versions. */
+async function queryLynxEngineVersions(traceQuery) {
+    const rows = await traceQuery.query(`
+    SELECT s.id AS slice_id, a.display_value AS version
+    FROM slice s JOIN args a ON s.arg_set_id = a.arg_set_id
+    WHERE s.name = 'LynxEngineVersion'
+      AND a.key IN ('version', 'debug.version', 'args.version')
+    ORDER BY s.ts, s.id
+  `);
+    const candidates = new Map();
+    for (const row of rows) {
+        if (row['version'] === undefined || row['version'] === null)
+            continue;
+        const version = String(row['version']).trim();
+        if (!version)
+            continue;
+        let candidate = candidates.get(version);
+        if (!candidate) {
+            const invalidReason = traceLynxVersionInvalidReason(version);
+            candidate = {
+                version,
+                ref: invalidReason ? null : `A_${version}`,
+                status: invalidReason ? 'invalid' : 'candidate',
+                ...(invalidReason ? { invalidReason } : {}),
+                sliceIds: [],
+            };
+            candidates.set(version, candidate);
+        }
+        const sliceId = Number(row['slice_id']);
+        if (Number.isSafeInteger(sliceId) && !candidate.sliceIds.includes(sliceId))
+            candidate.sliceIds.push(sliceId);
+    }
+    return [...candidates.values()];
+}
+//# sourceMappingURL=lynx_source_selection.js.map
+
+/***/ },
+
+/***/ 7021
+(__unused_webpack_module, exports, __webpack_require__) {
+
+
+// Copyright 2026 The Lynx Authors. All rights reserved.
+// Licensed under the Apache License Version 2.0.
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.memoryReportPaths = memoryReportPaths;
+exports.writeMemoryAnalysisData = writeMemoryAnalysisData;
+exports.generateMemoryAnalysisArtifacts = generateMemoryAnalysisArtifacts;
+const crypto_1 = __webpack_require__(6982);
+const fs = __importStar(__webpack_require__(9896));
+const os = __importStar(__webpack_require__(857));
+const path = __importStar(__webpack_require__(6928));
+const query_memory_snapshot_1 = __webpack_require__(1919);
+const trace_query_1 = __webpack_require__(2219);
+const memory_analysis_report_1 = __webpack_require__(6422);
+const frontend_sources_1 = __webpack_require__(8078);
+function memoryReportPaths(output) {
+    const resolved = path.resolve(output);
+    const reportPath = /\.html?$/i.test(resolved) ? resolved : path.join(resolved, 'report.html');
+    return {
+        directory: path.dirname(reportPath),
+        reportPath,
+        dataPath: path.join(path.dirname(reportPath), 'analysis.json'),
+    };
+}
+/** Additional JSON exports keep references relative to their own location. */
+function writeMemoryAnalysisData(result, output, baseDirectory) {
+    const directory = path.dirname(path.resolve(output));
+    const data = structuredClone(result);
+    const relative = (file) => path.relative(directory, path.resolve(baseDirectory, file));
+    if (data.artifacts)
+        data.artifacts.trace.file = relative(data.artifacts.trace.file);
+    for (const snapshot of data.snapshots) {
+        if (snapshot.outputPath)
+            snapshot.outputPath = relative(snapshot.outputPath);
+    }
+    for (const analysis of data.residualAnalyses) {
+        if (analysis.reportPath)
+            analysis.reportPath = relative(analysis.reportPath);
+        if (analysis.evidencePath)
+            analysis.evidencePath = relative(analysis.evidencePath);
+        if (analysis.contextPath)
+            analysis.contextPath = relative(analysis.contextPath);
+    }
+    fs.mkdirSync(directory, { recursive: true });
+    fs.writeFileSync(output, JSON.stringify(data, null, 2));
+}
+/** Make all inspection inputs portable. Paths in analysis.json are directory-relative. */
+async function generateMemoryAnalysisArtifacts(result, output, options = {}) {
+    const paths = memoryReportPaths(output);
+    const base = options.baseDirectory ?? paths.directory;
+    const source = options.tracePath ?? (result.artifacts && path.resolve(base, result.artifacts.trace.file));
+    if (!source || !fs.statSync(source).isFile()) {
+        throw new Error('A source Trace is required for a portable report. Use --path <trace> when importing legacy analysis JSON.');
+    }
+    const bytes = fs.readFileSync(source);
+    const sha256 = (0, crypto_1.createHash)('sha256').update(bytes).digest('hex');
+    if (result.artifacts && sha256 !== result.artifacts.trace.sha256) {
+        throw new Error('Source Trace does not match the analysis Trace SHA-256.');
+    }
+    const assets = [path.resolve(__dirname, '../report-assets'), path.resolve(__dirname, 'report-assets')].find((candidate) => fs.existsSync(path.join(candidate, 'viewer.js')));
+    if (!assets)
+        throw new Error('Report viewer assets are missing. Run the trace-query build including build:report-viewer.');
+    fs.mkdirSync(paths.directory, { recursive: true });
+    const traceFile = 'trace' + (path.extname(source) || '.pftrace');
+    const copy = (sourcePath, relativePath) => {
+        const target = path.join(paths.directory, relativePath);
+        fs.mkdirSync(path.dirname(target), { recursive: true });
+        if (path.resolve(sourcePath) !== target)
+            fs.copyFileSync(sourcePath, target);
+        return relativePath;
+    };
+    copy(source, traceFile);
+    fs.cpSync(assets, path.join(paths.directory, 'assets'), { recursive: true });
+    result.artifacts = { trace: { file: traceFile, size: bytes.length, sha256 } };
+    const embedded = { snapshots: [], vms: result.vms };
+    const sources = (0, frontend_sources_1.combineSources)(options.frontend, options.lynx);
+    const resolver = sources &&
+        new frontend_sources_1.FrontendSourceResolver(sources, path.join(os.tmpdir(), `lynx-source-location-cache-${sources.digest}.json`));
+    if (sources) {
+        result.frontendSources = {
+            digest: sources.digest,
+            warnings: sources.warnings,
+            snapshots: {},
+            projects: sources.projects.map(({ id, root, origin, commit, artifactOrigin, lynx, abandoned }) => ({
+                id,
+                root,
+                origin,
+                commit,
+                artifactOrigin,
+                lynx,
+                abandoned,
+            })),
+            artifacts: sources.artifacts.map(({ sources, ...artifact }) => ({
+                ...artifact,
+                sourceFileCount: new Set(Object.values(sources).map((source) => source.file)).size,
+            })),
+        };
+    }
+    let ownedQuery;
+    try {
+        for (const snapshot of result.snapshots) {
+            const item = { ...snapshot };
+            embedded.snapshots.push(item);
+            if (snapshot.chunkCount === 0) {
+                item.contentError =
+                    snapshot.integrity === 'metadata-only'
+                        ? 'Residual memory was cleared; this event has metadata only, with no heap graph.'
+                        : 'No snapshot content was captured in this trace.';
+                continue;
+            }
+            const relativePath = `snapshots/${snapshot.sliceId}.heapsnapshot`;
+            const sourcePath = snapshot.outputPath && path.resolve(base, snapshot.outputPath);
+            if (sourcePath && snapshot.sha256 && fs.existsSync(sourcePath)) {
+                const content = fs.readFileSync(sourcePath, 'utf8');
+                if ((0, crypto_1.createHash)('sha256').update(content).digest('hex') !== snapshot.sha256) {
+                    throw new Error(`Snapshot SHA-256 mismatch: ${snapshot.snapshotId}`);
+                }
+                item.content = content;
+                snapshot.outputPath = copy(sourcePath, relativePath);
+            }
+            else {
+                // Reuse the analysis processor, or initialize lazily on a JSON rerender.
+                if (!options.traceQuery && !ownedQuery) {
+                    ownedQuery = new trace_query_1.TraceQuery();
+                    await ownedQuery.initProcessor(source);
+                }
+                let extracted;
+                try {
+                    extracted = await (0, query_memory_snapshot_1.extractMemorySnapshot)(options.traceQuery ?? ownedQuery, snapshot.snapshotId, path.join(paths.directory, relativePath));
+                }
+                catch (error) {
+                    item.contentError = String(error instanceof Error ? error.message : error);
+                    snapshot.outputPath = undefined;
+                    continue;
+                }
+                if (snapshot.sha256 && extracted.sha256 !== snapshot.sha256) {
+                    throw new Error(`Snapshot SHA-256 mismatch: ${snapshot.snapshotId}`);
+                }
+                item.content = fs.readFileSync(extracted.outputPath, 'utf8');
+                snapshot.outputPath = relativePath;
+            }
+            // Preserve analysis metadata and evidence digests. Packaging is not a new
+            // residual analysis, even when a previously absent heap file is recovered.
+            item.outputPath = snapshot.outputPath;
+            const contentHash = (0, crypto_1.createHash)('sha256').update(item.content).digest('hex');
+            if (resolver) {
+                item.sourceLocations = resolver.snapshot(item.content);
+                result.frontendSources.snapshots[snapshot.snapshotId] = {
+                    sha256: contentHash,
+                    locations: item.sourceLocations,
+                };
+            }
+            else {
+                const saved = result.frontendSources?.snapshots[snapshot.snapshotId];
+                if (saved?.sha256 === contentHash)
+                    item.sourceLocations = saved.locations;
+                else if (saved)
+                    delete result.frontendSources.snapshots[snapshot.snapshotId];
+            }
+        }
+    }
+    finally {
+        await ownedQuery?.destroyProcessor();
+    }
+    resolver?.save();
+    for (const analysis of result.residualAnalyses) {
+        if (analysis.analyzerContext) {
+            analysis.contextPath = `snapshots/${analysis.reportAnchor}.context.json`;
+            fs.mkdirSync(path.join(paths.directory, 'snapshots'), { recursive: true });
+            fs.writeFileSync(path.join(paths.directory, analysis.contextPath), JSON.stringify(analysis.analyzerContext, null, 2));
+        }
+        if (analysis.reportHtml) {
+            analysis.reportPath = `instance-${analysis.instanceId}.html`;
+            fs.writeFileSync(path.join(paths.directory, analysis.reportPath), analysis.reportHtml);
+            // Large exhaustive allocation reports must not be duplicated in the
+            // parent HTML or analysis JSON; load the portable child file on demand.
+            analysis.reportHtml = undefined;
+        }
+        else if (analysis.reportPath) {
+            analysis.reportPath = copy(path.resolve(base, analysis.reportPath), `instance-${analysis.instanceId}.html`);
+        }
+        if (analysis.evidencePath) {
+            const evidence = JSON.parse(fs.readFileSync(path.resolve(base, analysis.evidencePath), 'utf8'));
+            for (const snapshot of evidence.snapshots ?? []) {
+                const metadata = result.snapshots.find((item) => item.sha256 === snapshot.sha256 && item.outputPath);
+                if (metadata)
+                    snapshot.file = metadata.outputPath;
+            }
+            analysis.evidencePath = `instance-${analysis.instanceId}-evidence.json`;
+            fs.writeFileSync(path.join(paths.directory, analysis.evidencePath), JSON.stringify(evidence, null, 2));
+        }
+    }
+    const manifestPath = options.residualResultsPath ?? path.join(base, 'residual-results.json');
+    if (fs.existsSync(manifestPath)) {
+        const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+        for (const page of manifest.pages) {
+            const analysis = result.residualAnalyses.find((item) => item.id === page.analysisId);
+            if (analysis) {
+                page.evidencePath = analysis.evidencePath;
+                page.reportPath = analysis.reportPath;
+            }
+        }
+        fs.writeFileSync(path.join(paths.directory, 'residual-results.json'), JSON.stringify(manifest, null, 2));
+    }
+    (0, memory_analysis_report_1.generateMemoryAnalysisReport)(result, paths.reportPath, embedded);
+    fs.writeFileSync(paths.dataPath, JSON.stringify(result, null, 2));
+    return paths;
+}
+//# sourceMappingURL=memory_analysis_artifacts.js.map
+
+/***/ },
+
 /***/ 6422
 (__unused_webpack_module, exports, __webpack_require__) {
 
@@ -3352,6 +5090,21 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.generateMemoryAnalysisReport = generateMemoryAnalysisReport;
 const fs = __importStar(__webpack_require__(9896));
 const path = __importStar(__webpack_require__(6928));
+const MTS_POOL_GROWTH_BYTES = 3 * 1024 * 1024;
+const REPORT_SECTIONS = {
+    'analysis-notes': { zh: '前置说明', en: 'Notes before analysis' },
+    'page-analysis': { zh: '页面实例分析', en: 'Page instance analysis' },
+    'mts-pool': { zh: '异常 MTS 虚拟机缓存池归属', en: 'Abnormal MTS VM pool attribution' },
+    'shared-bts': { zh: '共享的 BTS 虚拟机 Slot 内存', en: 'Shared BTS VM slot memory' },
+    'bts-residual': { zh: 'BTS 页面退出残留分析', en: 'BTS post-exit residual analysis' },
+    krypton: { zh: 'Graphic内存分析', en: 'Graphic Memory Analysis' },
+    snapshots: { zh: 'JS 引擎堆快照', en: 'JS heap snapshots' },
+    conclusion: { zh: '结论', en: 'Conclusion' },
+};
+const SNAPSHOT_SUBSECTIONS = {
+    'source-origins': { zh: 'JS 源码来源与绑定状态', en: 'JS source origins and binding status' },
+    'snapshot-inventory': { zh: '快照清单', en: 'Snapshot inventory' },
+};
 function escapeHtml(value) {
     return String(value ?? '')
         .replace(/&/g, '&amp;')
@@ -3389,6 +5142,245 @@ function formatTimestamp(tsMs, traceStartMs) {
     }
     return `${((tsMs - traceStartMs) / 1000).toFixed(3)}s`;
 }
+function residualStatus(analysis) {
+    const labels = {
+        pending: { zh: '待分析', en: 'Pending analysis' },
+        failed: { zh: '分析失败', en: 'Analysis failed' },
+        insufficient: { zh: '证据不足', en: 'Insufficient evidence' },
+        retained: { zh: '存在保活，待核实', en: 'Retained; needs verification' },
+        suspected: { zh: '疑似泄漏', en: 'Suspected leak' },
+        cleared: { zh: '已观察到清零', en: 'Observed cleared' },
+        confirmed: { zh: '泄漏', en: 'Leak' },
+        excluded: { zh: '已排除', en: 'Excluded' },
+        'known-non-leak': { zh: '已知非泄漏', en: 'Known non-leak' },
+    };
+    const label = localized(labels[analysis.status]);
+    return analysis.status === 'confirmed' ? `<span class="confirmed-status">${label}</span>` : label;
+}
+function residualText(value, analysis) {
+    return localized(analysis.translations?.[value] ?? knownCopy(value));
+}
+function findingTitle(finding, analysis, sourceLeak) {
+    const copy = analysis.translations?.[finding.title] ?? knownCopy(finding.title);
+    const suffix = sourceLeak || finding.disposition === 'confirmed'
+        ? /\s*[，,：:·—–-]\s*(?:泄漏|leak)\s*$/i
+        : finding.disposition === 'known-non-leak'
+            ? /\s*[，,：:·—–-]\s*(?:已知非泄漏|非泄漏|known non-leak|non-leak)\s*$/i
+            : undefined;
+    // Remove only a terminal status repeated by the adjacent badge; preserve evidence and translation keys.
+    const title = (text) => (suffix ? text.replace(suffix, '').trim() || text : text);
+    return localized({ zh: title(copy.zh), en: title(copy.en) });
+}
+function findingDisposition(disposition, sourceLeak = false) {
+    const labels = {
+        confirmed: { zh: '泄漏', en: 'Leak' },
+        suspected: { zh: '疑似泄漏', en: 'Suspected leak' },
+        retained: { zh: '存在保活', en: 'Retention observed' },
+        excluded: { zh: '已排除', en: 'Excluded' },
+        information: { zh: '观察信息', en: 'Observation' },
+        'known-non-leak': { zh: '非泄漏', en: 'Non-leak' },
+    };
+    // Source badges are a display policy, not evidence of a confirmed lifecycle violation.
+    const label = localized(sourceLeak && disposition !== 'confirmed' ? { zh: '泄漏', en: 'Leak' } : labels[disposition]);
+    const badgeClasses = {
+        confirmed: 'leak',
+        information: 'observation',
+        'known-non-leak': 'non-leak',
+    };
+    const badgeClass = sourceLeak ? 'leak' : badgeClasses[disposition];
+    return badgeClass ? `<span class="badge ${badgeClass}">${label}</span>` : label;
+}
+function snapshotIntegrity(snapshot) {
+    const labels = {
+        pending: { zh: '未提取', en: 'Not extracted' },
+        complete: { zh: '完整', en: 'Complete' },
+        incomplete: { zh: '不完整', en: 'Incomplete' },
+        'metadata-only': { zh: '仅清零元数据', en: 'Clearing metadata only' },
+    };
+    return localized(labels[snapshot.integrity]);
+}
+function captureReason(reason) {
+    const labels = {
+        first_post_exit_full_gc: { zh: '退出后首次完整 GC', en: 'First full GC after exit' },
+        post_exit_page_count_within_two: { zh: '退出后前两次页面加载', en: 'First two page loads after exit' },
+        residual_cleared: { zh: '残留清零', en: 'Residual cleared' },
+        residual_reappeared: { zh: '残留重新出现', en: 'Residual reappeared' },
+        residual_change_exceeds_20_percent: { zh: '残留变化超过 20%', en: 'Residual changed by more than 20%' },
+    };
+    return labels[reason ?? ''] ? localized(labels[reason ?? '']) : escapeHtml(reason ?? '-');
+}
+function snapshotLink(snapshot, result, label, node) {
+    const text = label ?? escapeHtml(snapshot.snapshotId);
+    if (!result.artifacts ||
+        snapshot.integrity === 'metadata-only' ||
+        snapshot.identityError ||
+        snapshot.chunkCount === 0)
+        return text;
+    const target = node
+        ? ` data-node-index="${escapeHtml(node.nodeIndex)}" data-node-id="${escapeHtml(node.nodeId)}"`
+        : '';
+    return `<a href="#snapshot-${encodeURIComponent(snapshot.snapshotId)}" data-snapshot-viewer data-snapshot-vm="${escapeHtml(snapshot.vmId)}" data-snapshot-id="${escapeHtml(snapshot.snapshotId)}"${target}>${text}</a>`;
+}
+function findingConclusion(finding, analysis, result) {
+    const anchors = finding.representativeObjects ?? [];
+    if (!anchors.length)
+        return residualText(finding.conclusion, analysis);
+    const copy = analysis.translations?.[finding.conclusion] ?? knownCopy(finding.conclusion);
+    return ['zh', 'en']
+        .map((language) => {
+        const remaining = new Set(anchors);
+        const link = (anchor) => {
+            const snapshot = result.snapshots.find((item) => item.snapshotId === anchor.snapshotId);
+            return snapshot ? snapshotLink(snapshot, result, escapeHtml(anchor.label), anchor) : escapeHtml(anchor.label);
+        };
+        let value = copy[language];
+        let html = '';
+        // Insert each explicit label once, escaping the untouched prose separately.
+        while (value) {
+            const next = [...remaining]
+                .map((anchor) => ({ anchor, index: value.indexOf(anchor.label) }))
+                .filter(({ index }) => index >= 0)
+                .sort((a, b) => a.index - b.index || b.anchor.label.length - a.anchor.label.length)[0];
+            if (!next)
+                break;
+            html += escapeHtml(value.slice(0, next.index)) + link(next.anchor);
+            value = value.slice(next.index + next.anchor.label.length);
+            remaining.delete(next.anchor);
+        }
+        html += escapeHtml(value);
+        if (remaining.size) {
+            html += `<br>${language === 'zh' ? '代表性对象' : 'Representative objects'}: ${[...remaining].map(link).join(' · ')}`;
+        }
+        return `<span class="finding-copy" lang="${language}">${html}</span>`;
+    })
+        .join('');
+}
+function snapshotLinks(ids, result) {
+    if (!result.artifacts || !ids?.length)
+        return '';
+    const snapshots = ids.flatMap((id) => result.snapshots.filter((snapshot) => snapshot.snapshotId === id));
+    return snapshots
+        .map((snapshot, index) => snapshotLink(snapshot, result, localized({
+        zh: snapshots.length === 1 ? '查看证据快照' : `证据快照 ${index + 1}`,
+        en: snapshots.length === 1 ? 'View evidence snapshot' : `Evidence snapshot ${index + 1}`,
+    })))
+        .join(' · ');
+}
+// User-specified source badges; these do not limit generic holder attribution.
+const NON_LEAK_SOURCES = new Set(['moduleCacheMonitor', '_$factoryCache', '_$loadScriptCache', '__Engine']);
+function sourceStatus(owners) {
+    const labels = owners.flatMap((owner) => owner.labels ?? [owner.label]);
+    return !labels.length ? 'unresolved' : labels.every((label) => NON_LEAK_SOURCES.has(label)) ? 'non-leak' : 'leak';
+}
+function sourceBadge(owners) {
+    const status = sourceStatus(owners);
+    if (status === 'unresolved') {
+        return `<span class="badge confidence low" data-source-status="unresolved">${localized({ zh: '待核实', en: 'Needs verification' })}</span>`;
+    }
+    const nonLeak = status === 'non-leak';
+    return `<span class="badge ${nonLeak ? 'non-leak' : 'leak'}" data-source-status="${nonLeak ? 'non-leak' : 'leak'}">${localized(nonLeak ? { zh: '非泄漏', en: 'Non-leak' } : { zh: '泄漏', en: 'Leak' })}</span>`;
+}
+function allocationBreakdown(finding, result) {
+    const data = finding.allocationBreakdown;
+    if (!data)
+        return '';
+    const snapshot = result.snapshots.find((s) => s.snapshotId === data.snapshotId);
+    const link = (label, node) => snapshot ? snapshotLink(snapshot, result, escapeHtml(label), node) : escapeHtml(label);
+    const allocationPreview = (sample) => {
+        if (!sample.stringPreview)
+            return '';
+        const preview = sample.stringPreview;
+        const value = `"${preview.text}${preview.truncated ? '...' : ''}"`;
+        return `<div class="allocation-string">${escapeHtml(value)}</div>`;
+    };
+    return `<div class="cache-breakdown"><strong>${localized({ zh: '残留来源分解', en: 'Residual retention breakdown' })}</strong>
+    <div class="residual-table-wrap"><table><thead><tr>${[
+        { zh: '来源（共同持有已去重）', en: 'Owners (shared allocations counted once)' },
+        { zh: '浅层大小 / 对象数', en: 'Shallow size / count' },
+        { zh: '分配与持有路径', en: 'Allocations and retention paths' },
+        { zh: '其它持有证据', en: 'Additional retention evidence' },
+    ]
+        .map((copy) => `<th>${localized(copy)}</th>`)
+        .join('')}</tr></thead><tbody>${[...data.rows]
+        .sort((a, b) => b.bytes - a.bytes)
+        .map((row) => `<tr data-allocation-bytes="${row.bytes}">
+      <td>${row.owners.map((owner) => link(owner.label, owner)).join(' + ') || localized({ zh: '未归属到所选持有者', en: 'Not attributed to selected holders' })} ${sourceBadge(row.owners)}</td>
+      <td>${row.bytes} B / ${row.count}</td>
+      <td>${row.samples
+        .map((sample) => `<div class="allocation-item"><div class="allocation-summary">${link(`${sample.type} @${sample.nodeId}`, sample)} · ${sample.bytes} B</div>
+        ${allocationPreview(sample)}
+        ${sample.paths.map((route) => `<div class="cache-path">${escapeHtml(route)}</div>`).join('')}</div>`)
+        .join('')}
+        ${row.count > row.samples.length ? localized({ zh: `展示 ${row.samples.length} 个代表对象，统计包含全部 ${row.count} 个`, en: `${row.samples.length} examples shown; all ${row.count} allocations counted` }) : ''}</td>
+      <td>${[
+        ...(row.owners.length > 1
+            ? [{ zh: '多个持有者共同持有，已去重', en: 'Shared by multiple holders; counted once' }]
+            : []),
+        ...(row.gcAtom ? [{ zh: 'GC atom_array 共同持有', en: 'Also held by GC atom_array' }] : []),
+        ...(row.otherRoot ? [{ zh: '另有其它强根路径', en: 'Additional strong root path' }] : []),
+        ...(!row.owners.length && !row.otherRoot && !row.gcAtom
+            ? [{ zh: '未发现已知强根，native 保活待核实', en: 'No known strong root; native retention unresolved' }]
+            : []),
+    ]
+        .map(localized)
+        .join('<br>') || '—'}</td></tr>`)
+        .join('')}</tbody>
+      <tfoot><tr><th>${localized({ zh: '合计', en: 'Total' })}</th><th>${data.bytes} B / ${data.nodeIds.length}</th><td colspan="2"></td></tr></tfoot></table></div>
+    <p class="hint">${localized({ zh: '每个分配的 self_size 只计一次。标签按来源名称规则判定，多个持有者需全部命中非泄漏名单才标为非泄漏。归属大小不等于断开引用后的可回收量。', en: 'Count each allocation self_size once. Source-name rules determine badges; all holders must be on the non-leak list for a Non-leak badge. Attributed bytes are not the amount reclaimable after removing references.' })}</p></div>`;
+}
+function renderResidualAnalysis(analysis, result, vmName) {
+    const snapshots = analysis.snapshotIds.map((id) => result.snapshots.find((item) => item.snapshotId === id));
+    return `<details open class="residual-card" id="${analysis.reportAnchor}" data-bts-vm-name="${escapeHtml(vmName)}" data-status="${analysis.status}">
+    <summary>instance ${analysis.instanceId} · slot_${analysis.slotId}${analysis.status === 'known-non-leak' ? '' : ` · ${residualStatus(analysis)}`}</summary>
+    <div class="residual-body">
+    <p>${escapeHtml(analysis.vmId)} · ${localized({ zh: '末次有效残留', en: 'Latest valid residual' })}: <strong>${escapeHtml(formatBytes(analysis.residualBytes))}</strong>
+    · ${localized({ zh: '末端完整覆盖', en: 'Complete sequence tail' })}: ${yesNo(analysis.tailComplete)}</p>
+    <p>${localized({ zh: '引擎模式', en: 'Engine mode' })}: ${escapeHtml(analysis.analyzerContext?.engineMode.toUpperCase() ?? '-')}
+      · ${localized({ zh: '同一已销毁页面的连续观察', en: 'Consecutive observations of one destroyed page' })}
+      · ${localized({ zh: '已知非泄漏残留', en: 'Known non-leak residual' })}: <strong>${escapeHtml(formatBytes(analysis.knownNonLeakBytes))}</strong></p>
+    <p>${localized({ zh: '可量化泄漏量', en: 'Quantified leak size' })}: ${escapeHtml(formatBytes(analysis.leakBytes))}
+      ${analysis.leakSizeBasis ? residualText(analysis.leakSizeBasis, analysis) : ''}</p>
+    <div class="residual-table-wrap"><table><thead><tr>
+      <th>#</th><th>Snapshot ID</th><th>${localized({ zh: '时间 / 退出后 / 距 Trace 末尾', en: 'Time / since exit / until trace end' })}</th>
+      <th>${localized({ zh: '后续加载数 / 原因', en: 'Later page loads / reason' })}</th>
+      <th>${localized({ zh: '触发时 / 采集后残留', en: 'Trigger / captured residual' })}</th><th>${localized({ zh: '完整性', en: 'Integrity' })}</th>
+    </tr></thead><tbody>${snapshots
+        .map((snapshot, index) => `<tr>
+      <td>${index + 1}</td><td class="mono">${snapshotLink(snapshot, result)}${snapshot.sha256 ? `<details><summary>SHA-256</summary>${escapeHtml(snapshot.sha256)}</details>` : ''}</td>
+      <td>${formatTimestamp(snapshot.captureTsMs, result.trace.startTsMs)} /
+        ${analysis.destroyTsMs === undefined ? '-' : `${((snapshot.captureTsMs - analysis.destroyTsMs) / 1000).toFixed(3)}s`} /
+        ${((result.trace.endTsMs - snapshot.captureTsMs) / 1000).toFixed(3)}s</td>
+      <td>${snapshot.postExitPageCount ?? '-'} / ${captureReason(snapshot.captureReason)}</td>
+      <td>${formatBytes(snapshot.triggerRetainedBytes)} / ${formatBytes(snapshot.retainedBytes)}</td>
+      <td>${snapshotIntegrity(snapshot)} ${localized(knownCopy(snapshot.identityError ?? snapshot.extractionError ?? ''))}</td>
+    </tr>`)
+        .join('')}</tbody></table></div>
+    ${analysis.findings
+        .map((finding) => {
+        const sourceLeak = finding.allocationBreakdown?.rows.some((row) => sourceStatus(row.owners) === 'leak') ?? false;
+        return `<article class="analysis-item ${finding.disposition === 'confirmed' ? 'issue-row' : ''}">
+      <h4>${findingTitle(finding, analysis, sourceLeak)} · ${findingDisposition(finding.disposition, sourceLeak)} ${confidenceBadge(finding.confidence)}</h4>
+      <p>${findingConclusion(finding, analysis, result)}</p>
+      ${allocationBreakdown(finding, result)}
+      <p>${snapshotLinks(finding.snapshotIds, result)}</p>
+      ${finding.disposition === 'known-non-leak' ? `<p>${localized({ zh: '可忽略残留', en: 'Ignorable residual' })}: ${escapeHtml(formatBytes(finding.exclusion?.bytes))}</p>` : ''}
+      ${finding.limitations.map((item) => `<p>${residualText(item, analysis)}</p>`).join('')}
+      ${finding.exclusion ? `<p>${escapeHtml(`${finding.exclusion.ruleId}@${finding.exclusion.version}`)}${finding.exclusion.reason !== finding.conclusion ? `: ${residualText(finding.exclusion.reason, analysis)}` : ''}</p>` : ''}
+      <p class="mono">${escapeHtml(finding.evidence_refs.join(', '))}</p>
+    </article>`;
+    })
+        .join('')}
+    ${analysis.gaps.map((gap) => `<p class="notice warning">${residualText(gap, analysis)}</p>`).join('')}
+    ${analysis.reportPath || analysis.reportHtml
+        ? `<details class="residual-child"><summary>${localized({ zh: '打开页面独立分析报告', en: 'Open page analysis report' })}</summary>
+      ${analysis.reportPath
+            ? `<a href="${escapeHtml(analysis.reportPath)}" download="instance-${analysis.instanceId}-residual.html">${localized({ zh: '保存独立 HTML', en: 'Save standalone HTML' })}</a>`
+            : `<button type="button" class="download-residual" data-instance="${analysis.instanceId}">${localized({ zh: '保存独立 HTML', en: 'Save standalone HTML' })}</button>`}
+      <iframe title="instance ${analysis.instanceId} residual analysis" loading="lazy" sandbox="allow-scripts" ${analysis.reportPath ? `src="${escapeHtml(analysis.reportPath)}"` : `srcdoc="${escapeHtml(analysis.reportHtml)}"`}></iframe>
+    </details>`
+        : `<p>${localized({ zh: '对象分析尚未完成，当前状态不能解释为无泄漏。', en: 'Object analysis is incomplete; this does not establish absence of leaks.' })}</p>`}
+    </div></details>`;
+}
 function pageAnchorId(instanceId) {
     return `page-instance-${instanceId}`;
 }
@@ -3416,12 +5408,12 @@ function confidenceBadge(confidence) {
     return `<span class="badge confidence ${confidence}">${localized(confidenceCopy(confidence))}</span>`;
 }
 function issueTitleCopy(issue) {
+    if (issue.titleText)
+        return issue.titleText;
     const titles = {
         high_page_memory: 'High-memory page',
         mts_pool_growth: 'Excessive MTS VM pool growth',
-        shared_bts_possible_leak: 'Possible shared BTS VM memory leak',
-        shared_bts_first_load_leak: 'Shared BTS first-load leak',
-        shared_bts_continuous_leak: 'Continuous shared BTS leak',
+        bts_residual_confirmed: 'BTS page leak',
         shared_bts_vm_not_destroyed: 'BTS VM not destroyed',
         shared_bts_accumulate_rising: 'BTS VM Accumulate memory is rising',
     };
@@ -3435,6 +5427,8 @@ function formatByteCountsInMessage(message) {
     return formattedLists.replace(/(-?\d+)\s+bytes/g, (_match, value) => formatBytes(Number(value)));
 }
 function issueMessageCopy(issue) {
+    if (issue.messageText)
+        return issue.messageText;
     const value = formatBytes(issue.valueBytes);
     let en;
     switch (issue.code) {
@@ -3442,22 +5436,16 @@ function issueMessageCopy(issue) {
             en = `The page-loading PSS peak increased by ${value}, exceeding 150 MiB.`;
             break;
         case 'mts_pool_growth':
-            en = `MTS VM Pool RSS increased by ${value} during the page lifetime, exceeding 3 MiB.`;
+            en = `MTS VM Pool RSS increased by ${value} during the page lifetime, exceeding 3 MiB. Attribution: ${issue.poolUrls?.join(', ') || 'Unknown URL'}.`;
             break;
-        case 'shared_bts_possible_leak':
-            en = `Shared BTS Accumulate increased by ${value} after the page exited and GC completed.`;
-            break;
-        case 'shared_bts_first_load_leak':
-            en = `The first load increased shared BTS Accumulate by ${value}, at least 10 times every later run.`;
-            break;
-        case 'shared_bts_continuous_leak':
-            en = 'Every repeated page load increased shared BTS Accumulate beyond the leak threshold.';
+        case 'bts_residual_confirmed':
+            en = issue.message;
             break;
         case 'shared_bts_vm_not_destroyed':
             en = `The BTS VM was created after trace start but was not destroyed before trace end. Its final RSS was ${value}.`;
             break;
         case 'shared_bts_accumulate_rising':
-            en = `The BTS VM Accumulate values after GC show a rising trend, with the stable level increasing by ${value}.`;
+            en = `The BTS VM Accumulate values after VM_GC show a rising trend, with the stable level increasing by ${value}.`;
             break;
         default:
             en = formatByteCountsInMessage(issue.message);
@@ -3466,7 +5454,16 @@ function issueMessageCopy(issue) {
 }
 function knownCopy(text) {
     const translations = {
-        '当前 Trace 未开启 memory_trace_force_gc，页面退出后的回落分析仅为低置信度参考。': 'memory_trace_force_gc is disabled. Post-exit memory rollback is low-confidence evidence only.',
+        '快照不能唯一绑定 VM generation。': 'The snapshot cannot be uniquely assigned to a VM generation.',
+        'instance_id 与范围 ID 冲突。': 'The instance_id conflicts with the snapshot scope ID.',
+        'slot 与范围 ID 冲突。': 'The slot conflicts with the snapshot scope ID.',
+        '页面专用 slot 归属不明确。': 'The dedicated page slot cannot be uniquely attributed.',
+        'residual 采集早于 BTS 页面销毁。': 'The residual was captured before BTS page destruction.',
+        'residual 缺少有效的 retained_bytes。': 'The residual record has no valid retained_bytes value.',
+        '没有该销毁页面的 residual 快照，无法分析对象残留。': 'No residual snapshot is available for this destroyed page; object retention cannot be analyzed.',
+        '非页面专用 slot，无法归因到单页。': 'This slot is not page-exclusive and cannot be attributed to one page.',
+        '序列末端未完整覆盖，展示的是末次有效观察。': 'The sequence tail is incomplete; the latest valid observation is shown.',
+        '快照 include_internal_allocations 不一致，统计不可直接比较。': 'Snapshot include_internal_allocations settings differ; statistics are not directly comparable.',
         'Trace 中没有找到与用户指定 URL 或 instance_id 匹配的页面。': 'No page matches the requested URL or instance_id.',
         '目标页面与其它页面创建过程重叠，部分单页面结论置信度较低。': 'The target page overlaps other page creation, reducing confidence in some page-level conclusions.',
         'Trace 中还加载了至少两个无关页面，建议减少无关 Lynx 页面或使用回放重新录制。': 'At least two unrelated pages were loaded. Reduce unrelated Lynx pages or record the replay again.',
@@ -3480,6 +5477,8 @@ function knownCopy(text) {
         '页面不是独立页面，未绘制高置信度内存增量图。': 'The page is not isolated, so no high-confidence memory delta chart was drawn.',
         '页面不是独立页面或 BTS 不支持内存上报，未绘制高置信度内存增量图。': 'The page is not isolated or its BTS does not report memory, so no high-confidence delta chart was drawn.',
         '该页面未使用共享 BTS 虚拟机。': 'This page does not use a shared BTS VM.',
+        '页面在 BTS 线程销毁后，该虚拟机未发生 VM_GC，无法确认 slot 残留。': 'The BTS VM did not run VM_GC after the page was destroyed on the BTS thread, so slot residual memory cannot be confirmed.',
+        'VM_GC 后没有包含页面 slot 的 BTS 内存样本，无法计算残留量。': 'No BTS memory sample containing the page slot was recorded after VM_GC, so residual memory cannot be calculated.',
         '指定的滚动时间范围与页面生命期没有交集。': 'The requested scrolling range does not overlap the page lifetime.',
         '指定时间范围内没有足够的 PSS 数据。': 'The requested range does not contain enough PSS data.',
         '页面退出后 PSS 低于页面创建前水位，存在其它内存下降因素。': 'Post-exit PSS fell below the pre-load level, indicating other memory reductions.',
@@ -3490,10 +5489,16 @@ function knownCopy(text) {
         '样本少于 3 个，无法可靠判断趋势。': 'Fewer than 3 samples are available; the trend is inconclusive.',
         '平滑后的基线持续上移，稳健斜率为正，且首尾差异超过噪声阈值。': 'The smoothed baseline rises persistently, the robust slope is positive, and the endpoint delta exceeds noise.',
         '未同时满足基线持续上移、正斜率和显著首尾差异。': 'The series does not simultaneously show a rising baseline, positive slope, and significant endpoint delta.',
-        'GC 后内存水位整体上移，稳健斜率为正，且首尾差异超过噪声阈值。': 'Post-GC memory levels rise overall, the robust slope is positive, and the endpoint delta exceeds noise.',
-        '未同时满足 GC 后内存水位整体上移、正斜率和显著首尾差异。': 'The post-GC series does not simultaneously show an overall level rise, positive slope, and significant endpoint delta.',
+        'VM_GC 后内存水位整体上移，稳健斜率为正，且首尾差异超过噪声阈值。': 'Post-VM_GC memory levels rise overall, the robust slope is positive, and the endpoint delta exceeds noise.',
+        '未同时满足 VM_GC 后内存水位整体上移、正斜率和显著首尾差异。': 'The post-VM_GC series does not simultaneously show an overall level rise, positive slope, and significant endpoint delta.',
     };
-    return { zh: text, en: translations[text] ?? text };
+    let en = translations[text] ?? text;
+    // Identity errors may combine multiple independently diagnosed conflicts.
+    if (en === text) {
+        for (const [source, translation] of Object.entries(translations))
+            en = en.replaceAll(source, translation);
+    }
+    return { zh: text, en };
 }
 function classificationCopy(classification) {
     const labels = {
@@ -3525,9 +5530,16 @@ function renderIssue(issue, result) {
     return `<article class="issue" data-bts-vm-names="${escapeHtml(JSON.stringify(sharedBtsNames))}">
     <div class="issue-title">${localized(issueTitleCopy(issue))} ${confidenceBadge(issue.confidence)}</div>
     <p>${localized(issueMessageCopy(issue))}</p>
-    <div class="issue-meta">${localized({ zh: '页面', en: 'Pages' })}: ${escapeHtml(issue.instanceIds.join(', ') || '-')}
+    <div class="issue-meta">${localized({ zh: '页面', en: 'Pages' })}: ${renderPageInstanceLinks(issue.instanceIds)}
       ${issue.vmId ? ` · VM: ${escapeHtml(issue.vmId)}` : ''}
+      ${issue.slotId !== undefined ? ` · slot_${escapeHtml(issue.slotId)}` : ''}
+      ${issue.poolUrls?.length
+        ? ` · ${localized({ zh: 'Pool 归属', en: 'Pool attribution' })}: ${escapeHtml(issue.poolUrls.join(', '))}`
+        : ''}
       ${issue.valueBytes !== undefined ? ` · ${localized({ zh: '数值', en: 'Value' })}: ${escapeHtml(`${issue.valueBytes} bytes`)}` : ''}
+      ${issue.code === 'bts_residual_confirmed' ? `<a class="residual-link" href="#residual-instance-${issue.instanceIds[0]}">${localized({ zh: '查看泄漏分析报告', en: 'View leak analysis report' })}</a>` : ''}
+      ${snapshotLinks(issue.snapshotIds, result)}
+      ${result.artifacts && !issue.snapshotIds?.length ? localized({ zh: '此 issue 未记录可定位的对象证据快照。', en: 'No locatable object evidence snapshot was recorded for this issue.' }) : ''}
     </div>
   </article>`;
 }
@@ -3553,8 +5565,8 @@ function renderReportFilter(result) {
     return `<section class="report-filter">
     <h2>${localized({ zh: '过滤报告内容', en: 'Filter report content' })}</h2>
     <p>${localized({
-        zh: '按共享 Context 的 BTS 虚拟机名称过滤页面、进一步分析和结论。',
-        en: 'Filter pages, further analysis, and conclusions by shared-context BTS VM name.',
+        zh: '按共享 Context 的 BTS 虚拟机名称过滤页面、VM 分析、退出残留和结论。',
+        en: 'Filter pages, VM analyses, post-exit residuals, and conclusions by shared-context BTS VM name.',
     })}</p>
     <div class="report-filter-options">
       ${vmNames
@@ -3577,10 +5589,20 @@ function seriesNameCopy(name) {
         'BTS RSS': 'BTS RSS',
         'BTS Accumulate': 'BTS Accumulate',
         'BTS Accumulate after GC': 'GC 后 BTS Accumulate',
+        'BTS Accumulate after VM_GC': 'VM_GC 后 BTS Accumulate',
     };
     return { zh: translations[name] ?? name, en: name };
 }
 function chartTitleCopy(chart) {
+    const graphics = {
+        'Graphic Component Memory Usage': 'Graphic组件内存占用',
+        'Canvas Graphics Resource Counts': 'Canvas组件图形资源计数',
+        'Krypton Resource Memory': 'Krypton资源内存',
+        'Graphic Resource Memory': 'Graphic资源内存',
+        'Krypton Graphics Resource Counts': 'Krypton图形资源计数',
+    };
+    if (graphics[chart.title])
+        return { zh: graphics[chart.title], en: chart.title };
     const deltaMatch = /^Page (\d+) Memory Delta$/.exec(chart.title);
     if (deltaMatch?.[1]) {
         return { zh: `页面 ${deltaMatch[1]} 内存增量`, en: chart.title };
@@ -3597,26 +5619,46 @@ function chartTitleCopy(chart) {
     if (componentMatch?.[1]) {
         return { zh: `页面 ${componentMatch[1]} 组件数量`, en: chart.title };
     }
-    const sharedBtsMatch = /^Shared BTS VM Heap Size: (.*) \(generation (\d+)\)$/.exec(chart.title);
+    const sharedBtsMatch = /^Shared BTS VM Slot Memory: (.*) \(generation (\d+)\)$/.exec(chart.title);
     if (sharedBtsMatch?.[1] && sharedBtsMatch[2]) {
         return {
-            zh: `共享的 BTS 虚拟机堆大小曲线：${sharedBtsMatch[1]}（generation ${sharedBtsMatch[2]}）`,
+            zh: `共享的 BTS 虚拟机 Slot 内存：${sharedBtsMatch[1]}（generation ${sharedBtsMatch[2]}）`,
             en: chart.title,
         };
     }
     return { zh: chart.title, en: chart.title };
 }
 function renderChartBody(chart) {
-    return `<div class="chart" data-chart-id="${escapeHtml(chart.id)}">
-      <canvas></canvas>
+    const notes = (chart.graphics?.notes ?? []).map((note) => `<p class="chart-note">${localized(note)}</p>`).join('');
+    if (!chart.series.length)
+        return `${notes}<p class="empty">${localized({
+            zh: '未采集到此类资源的有效明细/轨道，无法绘图。',
+            en: 'No detail/tracks for this resource type were captured; a chart is unavailable.',
+        })}</p>`;
+    return `${notes}<div class="chart" data-chart-id="${escapeHtml(chart.id)}">
+      <canvas role="img" aria-label="${escapeHtml(chartTitleCopy(chart).zh)} / ${escapeHtml(chartTitleCopy(chart).en)}"></canvas>
       <div class="chart-tooltip"></div>
       <div class="chart-legend" role="group"></div>
     </div>`;
 }
 function renderChart(chart) {
+    if (chart.graphics)
+        return `<details class="chart-card" open>
+    <summary>${localized(chartTitleCopy(chart))}</summary>${renderChartBody(chart)}</details>`;
     return `<section class="chart-card">
     <h4>${localized(chartTitleCopy(chart))}</h4>
     ${renderChartBody(chart)}
+  </section>`;
+}
+function globalGraphicGroups(result) {
+    return (result.kryptonAnalyses ?? []).filter((group) => [...group.memoryChart.series, ...group.countChart.series, ...(group.memoryChart.graphics?.comparisons ?? [])].some((series) => series.name.startsWith('Krypton') && series.trackId !== undefined));
+}
+function renderGraphicAnalysis(result) {
+    const groups = globalGraphicGroups(result);
+    if (!groups.length)
+        return '';
+    return `<section id="krypton"><h2>${localized(REPORT_SECTIONS.krypton)}</h2>
+    ${groups.map((group) => `${renderChart(group.memoryChart)}${renderChart(group.countChart)}`).join('')}
   </section>`;
 }
 function renderSharedBtsVmAnalysis(analysis, chart, traceStartTsMs) {
@@ -3626,8 +5668,8 @@ function renderSharedBtsVmAnalysis(analysis, chart, traceStartTsMs) {
                 className: 'analysis-issue',
                 badge: confidenceBadge('high'),
                 summary: localized({
-                    zh: `该 BTS 虚拟机直到 Trace 结束仍未销毁，结束时 RSS 为 ${formatBytes(analysis.endRssBytes)}。`,
-                    en: `The BTS VM was not destroyed before trace end. Its final RSS was ${formatBytes(analysis.endRssBytes)}.`,
+                    zh: `该 BTS 虚拟机直到 Trace 结束仍未销毁，结束时 RSS 为 ${formatBytes(analysis.endRssBytes)}（源样本 ${formatTimestamp(analysis.endRssSampleTsMs, traceStartTsMs)}）。`,
+                    en: `The BTS VM was not destroyed before trace end. Its final RSS was ${formatBytes(analysis.endRssBytes)} (sample ${formatTimestamp(analysis.endRssSampleTsMs, traceStartTsMs)}).`,
                 }),
             }
             : {
@@ -3653,8 +5695,8 @@ function renderSharedBtsVmAnalysis(analysis, chart, traceStartTsMs) {
             className: 'analysis-issue',
             badge: confidenceBadge('medium'),
             summary: localized({
-                zh: '各次 GC 完成后的 Accumulate 内存呈现上涨趋势。',
-                en: 'Accumulate memory after successive GC completions shows a rising trend.',
+                zh: '各次 VM_GC 完成后的 Accumulate 内存呈现上涨趋势。',
+                en: 'Accumulate memory after successive VM_GC events shows a rising trend.',
             }),
         }
         : {
@@ -3662,11 +5704,11 @@ function renderSharedBtsVmAnalysis(analysis, chart, traceStartTsMs) {
             badge: '',
             summary: localized({
                 zh: insufficientSamples
-                    ? '可用的 GC 后内存样本不足，无法可靠判断趋势。'
-                    : '各次 GC 完成后的 Accumulate 内存未呈现显著上涨趋势。',
+                    ? '可用的 VM_GC 后内存样本不足，无法可靠判断趋势。'
+                    : '各次 VM_GC 完成后的 Accumulate 内存未呈现显著上涨趋势。',
                 en: insufficientSamples
-                    ? 'There are too few post-GC memory samples for a reliable trend assessment.'
-                    : 'Accumulate memory after GC does not show a significant rising trend.',
+                    ? 'There are too few post-VM_GC memory samples for a reliable trend assessment.'
+                    : 'Accumulate memory after VM_GC does not show a significant rising trend.',
             }),
         };
     return `<details class="shared-bts-card" data-bts-vm-name="${escapeHtml(analysis.vmName)}" open>
@@ -3681,7 +5723,10 @@ function renderSharedBtsVmAnalysis(analysis, chart, traceStartTsMs) {
           <p>${localized({ zh: '关联页面', en: 'Associated pages' })}: ${escapeHtml(analysis.instanceIds.join(', ') || '-')}</p>
         </article>
         <article class="analysis-item ${trendResult.className}">
-          <h4>${localized({ zh: '分析项二：GC 后 Accumulate 趋势', en: 'Analysis 2: Post-GC Accumulate trend' })} ${trendResult.badge}</h4>
+          <h4>${localized({
+        zh: '分析项二：VM_GC 后 Accumulate 趋势',
+        en: 'Analysis 2: Post-VM_GC Accumulate trend',
+    })} ${trendResult.badge}</h4>
           <p>${trendResult.summary}</p>
           <p>${localized({ zh: '样本数', en: 'Samples' })}: ${trend.sampleCount} · ${localized({
         zh: '首尾稳定水位变化',
@@ -3727,6 +5772,23 @@ function renderPage(page, result) {
         analysisRows.push(`<article class="analysis-item">
       <h4>${localized({ zh: 'MTS VM Pool RSS 增量', en: 'MTS VM Pool RSS increase' })} ${confidenceBadge(page.analysis.mtsPool.confidence)}</h4>
       <strong>${escapeHtml(formatBytes(page.analysis.mtsPool.mtsPoolDeltaBytes))}</strong>
+      <p>${localized({ zh: '区间', en: 'Range' })}: ${escapeHtml(formatTimestamp(page.analysis.mtsPool.startTsMs, result.trace.startTsMs))} – ${escapeHtml(formatTimestamp(page.analysis.mtsPool.endTsMs, result.trace.startTsMs))}</p>
+      <table>
+        <thead><tr>
+          <th>URL</th>
+          <th>${localized({ zh: '引擎实例', en: 'Engine instances' })}</th>
+          <th>Accumulate</th>
+          <th>RSS</th>
+        </tr></thead>
+        <tbody>${page.analysis.mtsPool.pools
+            .map((pool) => `<tr class="${pool.rssDeltaBytes > MTS_POOL_GROWTH_BYTES ? 'issue-row' : ''}">
+              <td class="url-cell">${escapeHtml(pool.url)}</td>
+              <td>${pool.startInstanceCount} → ${pool.endInstanceCount} (${pool.instanceCountDelta >= 0 ? '+' : ''}${pool.instanceCountDelta})</td>
+              <td>${escapeHtml(formatBytes(pool.accumulateDeltaBytes))}</td>
+              <td>${escapeHtml(formatBytes(pool.rssDeltaBytes))}</td>
+            </tr>`)
+            .join('')}</tbody>
+      </table>
     </article>`);
     }
     if (page.analysis.rollback) {
@@ -3742,25 +5804,12 @@ function renderPage(page, result) {
       <p>${localized({ zh: '观察区间', en: 'Observation range' })}: ${escapeHtml(formatTimestamp(page.analysis.rollback.observationStartTsMs, result.trace.startTsMs))} – ${escapeHtml(formatTimestamp(page.analysis.rollback.observationEndTsMs, result.trace.startTsMs))}</p>
     </article>`);
     }
-    if (page.analysis.sharedBtsLeaks.length > 0) {
+    const residual = result.residualAnalyses.find((item) => item.id === page.analysis.residualAnalysisId);
+    if (residual) {
         analysisRows.push(`<article class="analysis-item">
-      <h4>${localized({ zh: '共享 BTS 内存回落', en: 'Shared BTS memory rollback' })}</h4>
-      <table>
-        <thead><tr>
-          <th>${localized({ zh: 'GC 完成时间', en: 'GC completion' })}</th>
-          <th>${localized({ zh: 'Accumulate 增量', en: 'Accumulate delta' })}</th>
-          <th>${localized({ zh: 'RSS 增量', en: 'RSS delta' })}</th>
-          <th>${localized({ zh: '判定', en: 'Assessment' })}</th>
-        </tr></thead>
-        <tbody>${page.analysis.sharedBtsLeaks
-            .map((event) => `<tr class="${event.issue ? 'issue-row' : ''}">
-              <td>${escapeHtml(formatTimestamp(event.gcEndTsMs, result.trace.startTsMs))}</td>
-              <td>${escapeHtml(formatBytes(event.accumulateDeltaBytes))}</td>
-              <td>${escapeHtml(formatBytes(event.rssDeltaBytes))}</td>
-              <td>${localized(event.issue ? { zh: '可能泄漏', en: 'Possible leak' } : { zh: '未超过阈值', en: 'Below threshold' })} · ${localized(confidenceCopy(event.confidence))}</td>
-            </tr>`)
-            .join('')}</tbody>
-      </table>
+      <h4>${localized({ zh: 'BTS 页面退出残留', en: 'BTS post-exit residual' })}</h4>
+      <p>slot_${residual.slotId} · ${escapeHtml(formatBytes(residual.residualBytes))} · ${residualStatus(residual)}</p>
+      <a class="residual-link" href="#${residual.reportAnchor}">${localized({ zh: '查看快照序列与分析报告', en: 'View snapshot sequence and analysis' })}</a>
     </article>`);
     }
     if (page.analysis.trends.length > 0) {
@@ -3786,7 +5835,13 @@ function renderPage(page, result) {
       </table>
     </article>`);
     }
-    const charts = [page.analysis.memoryChart, page.analysis.componentChart, ...page.analysis.trendCharts]
+    const charts = [
+        page.analysis.memoryChart,
+        page.analysis.componentChart,
+        page.analysis.graphicMemoryChart,
+        page.analysis.canvasResourceChart,
+        ...page.analysis.trendCharts,
+    ]
         .filter((chart) => chart !== undefined)
         .map(renderChart)
         .join('');
@@ -3824,6 +5879,10 @@ function renderPage(page, result) {
         { label: { zh: 'BTS 名称', en: 'BTS name' }, value: escapeHtml(page.btsVmName || '-') },
         { label: { zh: '共享 Context', en: 'Shared context' }, value: yesNo(page.sharedBts) },
         { label: { zh: 'BTS Generation', en: 'BTS generation' }, value: escapeHtml(page.btsVmGeneration) },
+        {
+            label: { zh: 'BTS Slot', en: 'BTS slot' },
+            value: page.btsSlot === undefined ? '-' : `slot_${escapeHtml(page.btsSlot)}`,
+        },
     ])}</tbody></table>
       ${analysisRows.join('')}
       ${notes}
@@ -3831,9 +5890,37 @@ function renderPage(page, result) {
     </div>
   </details>`;
 }
-function renderFurtherAnalysis(result) {
-    const chartsById = new Map(result.sharedBtsHeapCharts.map((chart) => [chart.id, chart]));
+function renderVmAndSnapshotSections(result) {
+    const chartsById = new Map(result.sharedBtsSlotCharts.map((chart) => [chart.id, chart]));
     const vmNamesById = new Map(result.vms.map((vm) => [vm.id, vm.name]));
+    const mtsPoolRows = result.mtsPoolGrowthEvents.length === 0
+        ? `<p class="empty">${localized({
+            zh: '没有发现超过阈值的 MTS 虚拟机缓存池增长。',
+            en: 'No MTS VM pool growth exceeded the threshold.',
+        })}</p>`
+        : `<table>
+        <thead><tr>
+          <th>${localized({ zh: '页面', en: 'Page' })}</th>
+          <th>URL</th>
+          <th>${localized({ zh: '引擎实例', en: 'Engine instances' })}</th>
+          <th>Accumulate</th>
+          <th>RSS</th>
+          <th>${localized({ zh: '区间', en: 'Range' })}</th>
+        </tr></thead>
+        <tbody>${result.mtsPoolGrowthEvents
+            .flatMap((event) => {
+            const attributedPools = event.pools.filter((pool) => pool.rssDeltaBytes > 0);
+            return (attributedPools.length > 0 ? attributedPools : event.pools).map((pool) => `<tr class="issue-row">
+                <td>${renderPageInstanceLinks([event.instanceId])}</td>
+                <td class="url-cell">${escapeHtml(pool.url)}</td>
+                <td>${pool.startInstanceCount} → ${pool.endInstanceCount} (${pool.instanceCountDelta >= 0 ? '+' : ''}${pool.instanceCountDelta})</td>
+                <td>${escapeHtml(formatBytes(pool.accumulateDeltaBytes))}</td>
+                <td>${escapeHtml(formatBytes(pool.rssDeltaBytes))}</td>
+                <td>${escapeHtml(formatTimestamp(event.startTsMs, result.trace.startTsMs))} – ${escapeHtml(formatTimestamp(event.endTsMs, result.trace.startTsMs))}</td>
+              </tr>`);
+        })
+            .join('')}</tbody>
+      </table>`;
     const sharedBtsVmAnalyses = result.sharedBtsVmAnalyses.length === 0
         ? `<p class="empty">${localized({
             zh: '没有找到支持内存上报的共享 BTS 虚拟机。',
@@ -3851,37 +5938,10 @@ function renderFurtherAnalysis(result) {
             en: 'No shared BTS VM analysis matches the current filter.',
         })}</p>
         </div>`;
-    const leakRows = result.sharedBtsLeakEvents.length === 0
-        ? `<p class="empty">${localized({
-            zh: '没有可展示的共享 BTS 泄漏周期。',
-            en: 'No shared BTS leak cycles are available.',
-        })}</p>`
-        : `<table class="shared-bts-leak-table">
-        <thead><tr>
-          <th>VM</th>
-          <th>${localized({ zh: '页面', en: 'Pages' })}</th>
-          <th>Accumulate</th>
-          <th>RSS</th>
-          <th>${localized({ zh: '快照对', en: 'Snapshot pair' })}</th>
-          <th>${localized({ zh: '判定', en: 'Assessment' })}</th>
-        </tr></thead>
-        <tbody>${result.sharedBtsLeakEvents
-            .map((event) => `<tr class="${event.issue ? 'issue-row' : ''}" data-bts-vm-name="${escapeHtml(vmNamesById.get(event.vmId) ?? '')}">
-              <td>${escapeHtml(event.vmId)}</td>
-              <td>${renderPageInstanceLinks(event.instanceIds)}</td>
-              <td>${escapeHtml(formatBytes(event.accumulateDeltaBytes))}</td>
-              <td>${escapeHtml(formatBytes(event.rssDeltaBytes))}</td>
-              <td>${escapeHtml(event.preSnapshotId ?? '-')} → ${escapeHtml(event.postSnapshotId ?? '-')}</td>
-              <td>${localized(event.issue ? { zh: '可能泄漏', en: 'Possible leak' } : { zh: '未超过阈值', en: 'Below threshold' })}${event.analysable
-            ? ` · ${localized({ zh: '可进行 Snapshot 分析', en: 'Snapshot analysis available' })}`
-            : ''}</td>
-            </tr>`)
-            .join('')}</tbody>
-      </table>
-      <p class="empty filter-empty" data-filter-empty="shared-bts-leaks">${localized({
-            zh: '当前过滤条件下没有共享 BTS 泄漏周期。',
-            en: 'No shared BTS leak cycle matches the current filter.',
-        })}</p>`;
+    const leakRows = result.residualAnalyses
+        .map((analysis) => renderResidualAnalysis(analysis, result, vmNamesById.get(analysis.vmId) ?? ''))
+        .join('') ||
+        `<p class="empty">${localized({ zh: '没有可分析的页面 residual 序列。', en: 'No page residual sequences available.' })}</p>`;
     const snapshotRows = result.snapshots.length === 0
         ? `<p class="empty">${localized({ zh: 'Trace 中没有 JS 堆快照。', en: 'No JS heap snapshot is present.' })}</p>`
         : `<table>
@@ -3889,32 +5949,71 @@ function renderFurtherAnalysis(result) {
           <th>VM</th>
           <th>${localized({ zh: '序号', en: 'Index' })}</th>
           <th>Snapshot ID</th>
+          <th>${localized({ zh: '范围 / 页面 / Slot', en: 'Scope / page / slot' })}</th>
           <th>${localized({ zh: '时间', en: 'Time' })}</th>
           <th>${localized({ zh: 'Dump 耗时', en: 'Dump duration' })}</th>
           <th>Accumulate</th>
           <th>RSS</th>
+          <th>${localized({ zh: '完整性 / 归属', en: 'Integrity / identity' })}</th>
         </tr></thead>
         <tbody>${result.snapshots
             .map((snapshot) => `<tr>
-              <td>${escapeHtml(snapshot.vmId)}</td>
+              <td>${escapeHtml(snapshot.assignedVmId ?? snapshot.vmId)}</td>
               <td>${snapshot.index}</td>
-              <td class="mono">${escapeHtml(snapshot.snapshotId)}</td>
-              <td>${escapeHtml(formatTimestamp(snapshot.willTsMs, result.trace.startTsMs))}</td>
-              <td>${snapshot.dumpDurationMs.toFixed(1)}ms</td>
+              <td class="mono">${snapshotLink(snapshot, result)}</td>
+              <td>${escapeHtml(snapshot.kind)} / ${snapshot.instanceId ?? '-'} / ${snapshot.slotId ?? '-'}</td>
+              <td>${escapeHtml(formatTimestamp(snapshot.captureTsMs, result.trace.startTsMs))}</td>
+              <td>${snapshot.dumpDurationMs === undefined ? '-' : `${snapshot.dumpDurationMs.toFixed(1)}ms`}</td>
               <td>${escapeHtml(formatBytes(snapshot.memory.accumulateBytes))}</td>
               <td>${escapeHtml(formatBytes(snapshot.memory.rssBytes))}</td>
+              <td>${snapshotIntegrity(snapshot)} ${localized(knownCopy(snapshot.identityError ?? ''))}</td>
             </tr>`)
             .join('')}</tbody>
       </table>`;
-    return `<section>
-    <h2>${localized({ zh: '进一步分析', en: 'Further analysis' })}</h2>
-    <h3>${localized({ zh: '共享的 BTS 虚拟机堆大小曲线', en: 'Shared BTS VM heap size curves' })}</h3>
+    return `<section id="mts-pool">
+    <h2>${localized(REPORT_SECTIONS['mts-pool'])}</h2>
+    <div class="report-table-wrap">${mtsPoolRows}</div>
+  </section>
+  <section id="shared-bts">
+    <h2>${localized(REPORT_SECTIONS['shared-bts'])}</h2>
     ${sharedBtsVmAnalyses}
-    <h3>${localized({ zh: '共享 BTS 泄漏周期', en: 'Shared BTS leak cycles' })}</h3>
+  </section>
+  <section id="bts-residual">
+    <h2>${localized(REPORT_SECTIONS['bts-residual'])}</h2>
     ${leakRows}
-    <h3>${localized({ zh: 'JS 引擎堆快照', en: 'JS heap snapshots' })}</h3>
-    ${snapshotRows}
+    <p class="empty filter-empty" data-filter-empty="bts-slot-leaks">${localized({
+        zh: '当前过滤条件下没有页面 residual 分析。',
+        en: 'No page residual analyses match the current filter.',
+    })}</p>
+  </section>
+  ${renderGraphicAnalysis(result)}
+  <section id="snapshots">
+    <h2>${localized(REPORT_SECTIONS.snapshots)}</h2>
+    ${renderSourceBindings(result)}
+    <h3 id="snapshot-inventory">${localized(SNAPSHOT_SUBSECTIONS['snapshot-inventory'])}</h3>
+    <div class="report-table-wrap">${snapshotRows}</div>
   </section>`;
+}
+function renderReportNavigation(pages, residuals, showGraphic) {
+    const link = (id, label) => `<a href="#${escapeHtml(encodeURIComponent(id))}" data-report-target="${escapeHtml(id)}">${label}</a>`;
+    return `<aside class="report-sidebar">
+    <details class="report-toc" open>
+      <summary>${localized({ zh: '目录', en: 'Contents' })}</summary>
+      <nav aria-label="报告目录 / Report contents"><ul>${Object.entries(REPORT_SECTIONS)
+        .filter(([id]) => id !== 'krypton' || showGraphic)
+        .map(([id, title]) => {
+        const children = id === 'page-analysis'
+            ? pages.map((page, index) => link(pageAnchorId(page.instanceId), localized({ zh: `页面 ${index + 1}`, en: `Page ${index + 1}` })))
+            : id === 'bts-residual'
+                ? residuals.map((analysis) => link(analysis.reportAnchor, `instance ${escapeHtml(analysis.instanceId)}`))
+                : id === 'snapshots'
+                    ? Object.entries(SNAPSHOT_SUBSECTIONS).map(([childId, title]) => link(childId, localized(title)))
+                    : [];
+        return `<li>${link(id, localized(title))}${children.length ? `<ul>${children.map((child) => `<li>${child}</li>`).join('')}</ul>` : ''}</li>`;
+    })
+        .join('')}</ul></nav>
+    </details>
+  </aside>`;
 }
 function chartScript(charts, traceStartMs) {
     const chartJson = JSON.stringify(Object.fromEntries(charts.map((chart) => [chart.id, chart]))).replace(/</g, '\\u003c');
@@ -3925,11 +6024,14 @@ function chartScript(charts, traceStartMs) {
     const colors = ['#2563eb', '#dc2626', '#059669', '#7c3aed', '#ea580c', '#0891b2', '#be123c', '#4f46e5'];
     const eventColors = {
       'RunGC': '#d97706',
+      'VM_GC': '#dc2626',
       'destroy_vm_instance': '#dc2626',
       'page_uses_bts_vm': '#2563eb',
       'BTSRuntime::Destroy': '#7c3aed',
-      'will_capture_snapshot': '#059669',
-      'shared_bts_possible_leak': '#e11d48',
+      'capture_snapshot': '#059669',
+      'bts_residual_confirmed': '#e11d48',
+      'LynxShell::Create': '#2563eb',
+      'LynxShell::~LynxShell': '#7c3aed',
     };
     let currentLanguage = 'zh';
     const seriesLabels = {
@@ -3941,23 +6043,41 @@ function chartScript(charts, traceStartMs) {
       'BTS Accumulate': { zh: 'BTS Accumulate', en: 'BTS Accumulate' },
       'MTS RSS': { zh: 'MTS RSS', en: 'MTS RSS' },
       'MTS Accumulate': { zh: 'MTS Accumulate', en: 'MTS Accumulate' },
+      'BTS Accumulate after VM_GC': { zh: 'VM_GC 后 BTS Accumulate', en: 'BTS Accumulate after VM_GC' },
     };
     const eventLabels = {
       'RunGC': { zh: 'RunGC', en: 'RunGC' },
+      'VM_GC': { zh: 'VM_GC', en: 'VM_GC' },
       'destroy_vm_instance': { zh: 'VM 销毁', en: 'VM destroyed' },
       'page_uses_bts_vm': { zh: '页面进入 BTS', en: 'Page entered BTS' },
       'BTSRuntime::Destroy': { zh: '页面退出 BTS', en: 'Page left BTS' },
-      'will_capture_snapshot': { zh: '堆快照', en: 'Heap snapshot' },
-      'shared_bts_possible_leak': { zh: '共享 BTS 可能泄漏', en: 'Possible shared BTS leak' },
+      'capture_snapshot': { zh: '堆快照', en: 'Heap snapshot' },
+      'bts_residual_confirmed': { zh: 'BTS 页面泄漏（点击查看）', en: 'BTS page leak (click to view)' },
+      'LynxShell::Create': { zh: '页面创建 · LynxShell::Create', en: 'Page created · LynxShell::Create' },
+      'LynxShell::~LynxShell': { zh: '页面销毁结束 · LynxShell::~LynxShell', en: 'Page destruction completed · LynxShell::~LynxShell' },
     };
     const confidenceLabels = {
       high: { zh: '高置信度', en: 'High confidence' },
       medium: { zh: '中等置信度', en: 'Medium confidence' },
       low: { zh: '低置信度', en: 'Low confidence' },
     };
-    const seriesLabel = (name) => seriesLabels[name]?.[currentLanguage] || name;
+    const graphicsLabels = Object.fromEntries(Object.values(charts).flatMap((chart) => [...chart.series, ...(chart.graphics?.comparisons || [])])
+      .filter((series) => series.label).map((series) => [series.name, series.label]));
+    const seriesLabel = (name) => (graphicsLabels[name] || seriesLabels[name])?.[currentLanguage] || name;
     const eventLabel = (name) => eventLabels[name]?.[currentLanguage] || name;
     const eventColor = (name) => eventColors[name] || '#475569';
+    const seriesColor = (series, index) => {
+      if (series.color) return series.color;
+      if (series.colorKey) {
+        let hash = 0;
+        for (const c of series.colorKey) hash = (hash * 31 + c.charCodeAt(0)) >>> 0;
+        return 'hsl(' + (hash % 360) + ' 62% 47%)';
+      }
+      if (series.slotId === 0) return '#64748b';
+      if (series.slotId === 1) return '#2563eb';
+      if (series.slotId === 2) return '#ea580c';
+      return series.slotId === undefined ? colors[index % colors.length] : 'hsl(' + ((series.slotId * 47) % 360) + ' 62% 47%)';
+    };
     const escapeMarkup = (value) => String(value ?? '')
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
@@ -3973,6 +6093,17 @@ function chartScript(charts, traceStartMs) {
       if (abs >= 1024) return sign + (abs / 1024).toFixed(2) + ' KiB';
       return Math.round(value) + ' B';
     };
+    const positionTooltip = (element, canvasWidth, canvasHeight, mouseX, mouseY, fixedTop) => {
+      const tooltipWidth = element.offsetWidth;
+      const tooltipHeight = element.offsetHeight;
+      let left = mouseX + 14;
+      if (left + tooltipWidth > canvasWidth - 8) left = mouseX - tooltipWidth - 14;
+      const maxLeft = Math.max(8, canvasWidth - tooltipWidth - 8);
+      element.style.left = Math.max(8, Math.min(maxLeft, left)) + 'px';
+      const top = fixedTop ?? mouseY - 70;
+      const maxTop = Math.max(8, canvasHeight - tooltipHeight - 8);
+      element.style.top = Math.max(8, Math.min(maxTop, top)) + 'px';
+    };
     const hiddenSeriesByChart = new Map();
     const renderLegend = (root, chart, hiddenSeries) => {
       const legend = root.querySelector('.chart-legend');
@@ -3985,7 +6116,7 @@ function chartScript(charts, traceStartMs) {
         button.setAttribute('aria-pressed', String(!hidden));
         button.title = currentLanguage === 'zh' ? '点击显示或隐藏该数据' : 'Click to show or hide this series';
         const marker = document.createElement('i');
-        marker.style.background = colors[index % colors.length];
+        marker.style.background = seriesColor(series, index);
         const label = document.createElement('span');
         label.textContent = seriesLabel(series.name);
         button.append(marker, label);
@@ -4011,9 +6142,20 @@ function chartScript(charts, traceStartMs) {
       const chart = charts[root.dataset.chartId];
       if (!chart || chart.series.length === 0) return;
       const canvas = root.querySelector('canvas');
+      let hoverOverlay = root.querySelector('.chart-hover-overlay');
+      if (!hoverOverlay) {
+        hoverOverlay = document.createElement('canvas');
+        hoverOverlay.className = 'chart-hover-overlay';
+        canvas.after(hoverOverlay);
+      }
       const tooltip = root.querySelector('.chart-tooltip');
+      const stackedArea =
+        chart.renderMode === 'stacked-area' || chart.series.some((series) => series.renderMode === 'stacked-area');
+      const isStackedSeries = (series) => (series.renderMode || chart.renderMode || 'line') === 'stacked-area';
+      const areaSeries = chart.series.filter(isStackedSeries);
       const intervalBars =
         chart.renderMode === 'interval-bars' || chart.series.some((series) => series.renderMode === 'interval-bars');
+      const detailedChart = intervalBars || stackedArea || !!chart.graphics;
       const hiddenSeries = hiddenSeriesByChart.get(chart.id) || new Set();
       hiddenSeriesByChart.set(chart.id, hiddenSeries);
       renderLegend(root, chart, hiddenSeries);
@@ -4022,17 +6164,24 @@ function chartScript(charts, traceStartMs) {
         .filter((item) => !hiddenSeries.has(item.series.name));
       const rect = root.getBoundingClientRect();
       const width = Math.max(640, rect.width);
-      const height = intervalBars ? 390 : 320;
+      const height = detailedChart ? 390 : 320;
       const ratio = window.devicePixelRatio || 1;
       canvas.width = width * ratio;
       canvas.height = height * ratio;
       canvas.style.width = width + 'px';
       canvas.style.height = height + 'px';
+      hoverOverlay.width = width * ratio;
+      hoverOverlay.height = height * ratio;
+      hoverOverlay.style.width = width + 'px';
+      hoverOverlay.style.height = height + 'px';
       const ctx = canvas.getContext('2d');
+      const hoverCtx = hoverOverlay.getContext('2d');
       ctx.scale(ratio, ratio);
-      const pad = { left: 72, right: 20, top: 22, bottom: intervalBars ? 120 : 46 };
-      const all = visibleSeries.flatMap((item) => item.series.points);
-      if (all.length === 0) {
+      hoverCtx.scale(ratio, ratio);
+      const clearHoverPoints = () => hoverCtx.clearRect(0, 0, width, height);
+      const pad = { left: 72, right: 20, top: 22, bottom: detailedChart ? 120 : 46 };
+      const all = visibleSeries.flatMap((item) => item.series.points).filter((point) => !point.unavailable);
+      if (all.length === 0 && !chart.graphics) {
         tooltip.style.display = 'none';
         ctx.fillStyle = '#64748b';
         ctx.font = '13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
@@ -4045,15 +6194,29 @@ function chartScript(charts, traceStartMs) {
       }
       const minX = chart.xStartTsMs ?? Math.min(...all.map((point) => point.tsMs));
       const maxX = chart.xEndTsMs ?? Math.max(...all.map((point) => point.tsMs));
-      let minY = Math.min(...all.map((point) => point.value));
-      let maxY = Math.max(...all.map((point) => point.value));
+      const pointAtOrBefore = (series, ts) =>
+        [...series.points].reverse().find((point) => point.tsMs <= ts);
+      const knownValue = (point) => point && !point.unavailable ? point.value : 0;
+      let minY = all.length ? Math.min(...all.map((point) => point.value)) : 0;
+      let maxY = all.length ? Math.max(...all.map((point) => point.value)) : 1;
+      if (stackedArea) {
+        const timestamps = [...new Set(all.map((point) => point.tsMs))];
+        minY = Math.min(0, minY);
+        maxY = Math.max(
+          maxY,
+          ...timestamps.map((ts) =>
+            visibleSeries.filter((item) => isStackedSeries(item.series))
+              .reduce((total, item) => total + knownValue(pointAtOrBefore(item.series, ts)), 0),
+          ),
+        );
+      }
       if (chart.zeroBaseline) {
         minY = Math.min(0, minY);
         maxY = Math.max(0, maxY);
       }
-      if (minY === maxY) { minY -= 1; maxY += 1; }
+      if (minY === maxY) { if (!chart.zeroBaseline) minY -= 1; maxY += 1; }
       const yMargin = (maxY - minY) * 0.08;
-      if (!intervalBars || minY < 0) minY -= yMargin;
+      if (!detailedChart || minY < 0) minY -= yMargin;
       maxY += yMargin;
       const x = (value) => pad.left + ((value - minX) / Math.max(1, maxX - minX)) * (width - pad.left - pad.right);
       const y = (value) => pad.top + (1 - (value - minY) / (maxY - minY)) * (height - pad.top - pad.bottom);
@@ -4066,7 +6229,7 @@ function chartScript(charts, traceStartMs) {
         const value = minY + ((maxY - minY) * i) / 4;
         const py = y(value);
         ctx.beginPath(); ctx.moveTo(pad.left, py); ctx.lineTo(width - pad.right, py); ctx.stroke();
-        ctx.fillText(format(value, visibleSeries[0].series.unit), 4, py + 4);
+        ctx.fillText(format(value, chart.series[0].unit), 4, py + 4);
       }
       if (chart.zeroBaseline) {
         const zeroY = y(0);
@@ -4089,13 +6252,41 @@ function chartScript(charts, traceStartMs) {
         ctx.fillText(
           ((value - traceStartMs) / 1000).toFixed(1) + 's',
           px,
-          intervalBars ? height - 10 : plotBottom + 18,
+          detailedChart ? height - 10 : plotBottom + 18,
         );
       }
       ctx.textAlign = 'left';
-      visibleSeries.forEach(({ series, index }) => {
-        const color = colors[index % colors.length];
+      visibleSeries.forEach(({ series, index }, visibleIndex) => {
+        const color = seriesColor(series, index);
         const seriesRenderMode = series.renderMode || chart.renderMode || 'line';
+        if (seriesRenderMode === 'stacked-area') {
+          ctx.save();
+          ctx.fillStyle = color;
+          ctx.globalAlpha = 0.72;
+          series.points.forEach((point, pointIndex) => {
+            if (point.unavailable || point.value === 0) return;
+            const nextPoint = series.points[pointIndex + 1];
+            const startTsMs = Math.max(minX, point.tsMs);
+            const endTsMs = Math.min(maxX, nextPoint?.tsMs ?? maxX);
+            if (endTsMs <= startTsMs) return;
+            const bottomValue = visibleSeries
+              .slice(0, visibleIndex)
+              .filter((item) => isStackedSeries(item.series))
+              .reduce(
+                (total, item) => total + knownValue(pointAtOrBefore(item.series, point.tsMs)),
+                0,
+              );
+            const topValue = bottomValue + point.value;
+            ctx.fillRect(
+              x(startTsMs),
+              y(topValue),
+              Math.max(1, x(endTsMs) - x(startTsMs)),
+              y(bottomValue) - y(topValue),
+            );
+          });
+          ctx.restore();
+          return;
+        }
         if (seriesRenderMode === 'interval-bars') {
           const zeroY = y(0);
           ctx.save();
@@ -4119,18 +6310,57 @@ function chartScript(charts, traceStartMs) {
           return;
         }
         ctx.strokeStyle = color;
-        ctx.lineWidth = intervalBars ? 1.25 : 2;
+        ctx.lineWidth = detailedChart ? 1.25 : 2;
         ctx.beginPath();
+        let previous;
         series.points.forEach((point, pointIndex) => {
+          if (point.unavailable) {
+            if (chart.graphics && previous) ctx.lineTo(x(point.tsMs), y(previous.value));
+            previous = undefined;
+            return;
+          }
           const px = x(point.tsMs); const py = y(point.value);
-          if (pointIndex === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+          if (!previous) ctx.moveTo(px, py);
+          else {
+            if (chart.graphics && series.interpolation !== 'linear') ctx.lineTo(px, y(previous.value));
+            ctx.lineTo(px, py);
+          }
+          previous = point;
         });
         ctx.stroke();
+        if (chart.graphics) {
+          const first = series.points.find((point) => !point.unavailable);
+          if (first) { ctx.fillStyle = color; ctx.beginPath(); ctx.arc(x(first.tsMs), y(first.value), 2.5, 0, Math.PI * 2); ctx.fill(); }
+        }
+      });
+      const chartEvents = [...(chart.events || [])]
+        .filter((item) => item.tsMs >= minX && item.tsMs <= maxX)
+        .filter((item) => !chart.graphics?.filterPageEvents ||
+          !document.querySelector('.bts-filter-checkbox[value="' + CSS.escape(item.btsVmName || '') + '"]') ||
+          document.querySelector('.bts-filter-checkbox[value="' + CSS.escape(item.btsVmName || '') + '"]').checked)
+        .sort((left, right) => left.tsMs - right.tsMs || left.name.localeCompare(right.name));
+      const verticalEventMarkers = chartEvents
+        .filter((item) => item.renderMode === 'vertical-line')
+        .map((item) => ({ item, px: x(item.tsMs) }));
+      verticalEventMarkers.forEach((marker, index) => {
+        ctx.save();
+        ctx.strokeStyle = eventColor(marker.item.name);
+        ctx.fillStyle = eventColor(marker.item.name);
+        ctx.lineWidth = 1;
+        ctx.setLineDash([4, 3]);
+        ctx.beginPath();
+        ctx.moveTo(marker.px, pad.top);
+        ctx.lineTo(marker.px, plotBottom);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.font = '600 10px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+        ctx.textAlign = marker.px > width - pad.right - 40 ? 'right' : 'left';
+        ctx.fillText('GC', marker.px + (ctx.textAlign === 'right' ? -3 : 3), pad.top + 11 + (index % 2) * 12);
+        ctx.restore();
       });
       const markerLanes = [-Infinity, -Infinity, -Infinity, -Infinity];
-      const eventMarkers = [...(chart.events || [])]
-        .filter((item) => item.tsMs >= minX && item.tsMs <= maxX)
-        .sort((left, right) => left.tsMs - right.tsMs || left.name.localeCompare(right.name))
+      const eventMarkers = chartEvents
+        .filter((item) => item.renderMode !== 'vertical-line')
         .map((item) => {
           const px = x(item.tsMs);
           let lane = markerLanes.findIndex((lastX) => px - lastX >= 18);
@@ -4147,7 +6377,7 @@ function chartScript(charts, traceStartMs) {
         ctx.fillStyle = color;
         ctx.strokeStyle = color;
         ctx.lineWidth = 1;
-        if (marker.item.name === 'shared_bts_possible_leak') {
+        if (marker.item.name === 'bts_residual_confirmed') {
           ctx.beginPath();
           ctx.moveTo(marker.px, plotBottom + 2);
           ctx.lineTo(marker.px - 5, marker.top);
@@ -4204,17 +6434,34 @@ function chartScript(charts, traceStartMs) {
         if (item.rssDeltaBytes !== undefined) {
           rows.push('<div>RSS: ' + escapeMarkup(format(item.rssDeltaBytes, 'bytes')) + '</div>');
         }
+        if (item.slotId !== undefined) rows.push('<div>slot_' + escapeMarkup(item.slotId) + '</div>');
+        if (item.residualBytes !== undefined) {
+          rows.push('<div>' + (currentLanguage === 'zh' ? '残留量' : 'Residual') + ': ' +
+            escapeMarkup(format(item.residualBytes, 'bytes')) + '</div>');
+        }
+        if (item.leakBytes !== undefined) {
+          rows.push('<div>' + (currentLanguage === 'zh' ? '可量化泄漏量' : 'Quantified leak size') + ': ' +
+            escapeMarkup(format(item.leakBytes, 'bytes')) + '</div>');
+          rows.push('<div>' + escapeMarkup(item.leakSizeBasisText?.[currentLanguage] || item.leakSizeBasis || '') + '</div>');
+        }
         if (item.url) rows.push('<div class="tooltip-url">URL: ' + escapeMarkup(item.url) + '</div>');
         if (item.snapshotId) rows.push('<div>' + snapshotLabel + ': ' + escapeMarkup(item.snapshotId) + '</div>');
         tooltip.innerHTML = rows.join('');
         tooltip.style.display = 'block';
-        tooltip.style.left = Math.max(8, Math.min(width - 610, mouseX + 14)) + 'px';
-        tooltip.style.top = Math.min(height - 120, Math.max(8, mouseY - 70)) + 'px';
+        positionTooltip(tooltip, width, height, mouseX, mouseY);
+      };
+      canvas.onclick = (event) => {
+        const bounds = canvas.getBoundingClientRect();
+        const marker = eventMarkers.find((m) => m.item.reportAnchor &&
+          event.clientX - bounds.left >= m.left - 3 && event.clientX - bounds.left <= m.right + 3 &&
+          event.clientY - bounds.top >= m.top - 5 && event.clientY - bounds.top <= m.bottom + 5);
+        if (marker) document.querySelector('a.residual-link[href="#' + marker.item.reportAnchor + '"]')?.click();
       };
       canvas.onmousemove = (event) => {
         const bounds = canvas.getBoundingClientRect();
         const mouseX = event.clientX - bounds.left;
         const mouseY = event.clientY - bounds.top;
+        clearHoverPoints();
         const eventMarker = eventMarkers
           .filter(
             (marker) =>
@@ -4228,6 +6475,13 @@ function chartScript(charts, traceStartMs) {
           showEventTooltip(eventMarker, mouseX, mouseY);
           return;
         }
+        const verticalEventMarker = verticalEventMarkers
+          .filter((marker) => Math.abs(marker.px - mouseX) <= 4 && mouseY >= pad.top && mouseY <= plotBottom)
+          .sort((left, right) => Math.abs(left.px - mouseX) - Math.abs(right.px - mouseX))[0];
+        if (verticalEventMarker) {
+          showEventTooltip(verticalEventMarker, mouseX, mouseY);
+          return;
+        }
         if (mouseX < pad.left || mouseX > width - pad.right || mouseY > plotBottom) {
           tooltip.style.display = 'none';
           return;
@@ -4236,13 +6490,13 @@ function chartScript(charts, traceStartMs) {
         const rows = visibleSeries
           .map(({ series, index }) => {
             const seriesRenderMode = series.renderMode || chart.renderMode || 'line';
-            const nearest = seriesRenderMode === 'interval-bars'
-              ? [...series.points].reverse().find((point) => point.tsMs <= ts) || series.points[0]
-              : series.points.reduce(
+            const nearest = (chart.graphics && series.interpolation !== 'linear') || seriesRenderMode === 'interval-bars' || seriesRenderMode === 'stacked-area'
+              ? pointAtOrBefore(series, ts)
+              : (chart.graphics && ts < (series.points[0]?.tsMs ?? Infinity)) ? undefined : series.points.reduce(
                   (best, point) => (Math.abs(point.tsMs - ts) < Math.abs(best.tsMs - ts) ? point : best),
                   series.points[0],
                 );
-            return { series, nearest, color: colors[index % colors.length] };
+            return { series, nearest: nearest || (chart.graphics ? { tsMs: ts, value: 0, unavailable: 'not yet reported' } : undefined), color: seriesColor(series, index) };
           })
           .filter((row) => row.nearest);
         if (rows.length === 0) return;
@@ -4256,17 +6510,72 @@ function chartScript(charts, traceStartMs) {
               ': ' +
               escapeMarkup([...loadedInstanceIds].sort((left, right) => left - right).join(', ') || '-') +
               '</div>';
-        tooltip.innerHTML = '<strong>t=' + ((rows[0].nearest.tsMs - traceStartMs) / 1000).toFixed(3) + 's</strong>' +
+        const total = areaSeries.reduce((sum, series) => sum + knownValue(pointAtOrBefore(series, ts)), 0);
+        const knownAreaCount = areaSeries.filter((series) => {
+          const point = pointAtOrBefore(series, ts);
+          return point && !point.unavailable;
+        }).length;
+        const partial = areaSeries.length === 0 || areaSeries.some((series) => {
+          const point = pointAtOrBefore(series, ts);
+          return !point || point.unavailable || point.partial;
+        });
+        const rowLabel = (row) => {
+          if (row.series.slotId === undefined || row.series.slotId < 3) return seriesLabel(row.series.name);
+          const instanceIds = row.nearest.instanceIds || [];
+          const destroyedInstanceIds = row.nearest.destroyedInstanceIds || [];
+          if (instanceIds.length === 1) {
+            return 'slot_' + row.series.slotId + ' (instance_id=' + instanceIds[0] +
+              (destroyedInstanceIds.includes(instanceIds[0]) ? ', destroyed' : '') + ')';
+          }
+          if (instanceIds.length > 1) {
+            return 'slot_' + row.series.slotId + ' (instance_ids=' + instanceIds.join(', ') + ')';
+          }
+          return 'slot_' + row.series.slotId;
+        };
+        let stackedValue = 0;
+        rows.forEach((row) => {
+          if (row.nearest.unavailable) return;
+          if (isStackedSeries(row.series)) stackedValue += row.nearest.value;
+          const pointValue = isStackedSeries(row.series) ? stackedValue : row.nearest.value;
+          hoverCtx.save();
+          hoverCtx.fillStyle = row.color;
+          hoverCtx.strokeStyle = '#fff';
+          hoverCtx.lineWidth = 1.5;
+          hoverCtx.beginPath();
+          hoverCtx.arc(x(chart.graphics && row.series.interpolation !== 'linear' ? ts : row.nearest.tsMs), y(pointValue), 4, 0, Math.PI * 2);
+          hoverCtx.fill();
+          hoverCtx.stroke();
+          hoverCtx.restore();
+        });
+        const graphicSummary = chart.graphics ? (
+          (stackedArea ? '<div>' + (currentLanguage === 'zh' ? (partial ? '已知分量合计 / 占比' : '全部分量合计 / 占比') :
+            (partial ? 'Known-part sum / shares' : 'All-part sum / shares')) + ': ' + (knownAreaCount ? format(total, 'bytes') : '—') + '</div>' : '') +
+          (chart.graphics.comparisons || []).map((series) => {
+            const point = pointAtOrBefore(series, ts);
+            return '<div>' + escapeMarkup(seriesLabel(series.name)) + ' (' + (currentLanguage === 'zh' ? (point?.partial ? '已知部分对照' : '总量对照') : (point?.partial ? 'known-part comparison' : 'comparison')) + '): ' +
+              (point && !point.unavailable ? format(point.value, 'bytes') : '—') + '</div>';
+          }).join('') + '<div>' + (currentLanguage === 'zh' ? '上报值可能来自缓存；非 PSS / VM 内存。' : 'Reports may be cached; not PSS / VM memory.') + '</div>'
+        ) : '';
+        tooltip.innerHTML = '<strong>t=' + (((chart.graphics ? ts : rows[0].nearest.tsMs) - traceStartMs) / 1000).toFixed(3) + 's</strong>' +
           rows.map((row) => '<div><i style="background:' + row.color + '"></i>' +
-            seriesLabel(row.series.name) + ': ' + format(row.nearest.value, row.series.unit) + '</div>').join('') +
-          alivePages;
+            escapeMarkup(rowLabel(row)) + ': ' +
+            (row.nearest.unavailable ? (currentLanguage === 'zh' ? '未知 / 缺失 / 冲突' : 'Unknown / missing / conflicting') :
+              format(row.nearest.value, row.series.unit) +
+              (row.nearest.partial ? (currentLanguage === 'zh' ? '（已知部分）' : ' (known part)') : '') +
+              (isStackedSeries(row.series) ? ' (' + (total > 0 ? (row.nearest.value / total) * 100 : 0).toFixed(2) + '%)' : '')) +
+            '</div>').join('') +
+          graphicSummary + alivePages;
         tooltip.style.display = 'block';
-        tooltip.style.left = Math.min(width - 250, Math.max(8, mouseX + 14)) + 'px';
-        tooltip.style.top = '14px';
+        positionTooltip(tooltip, width, height, mouseX, mouseY, 14);
       };
-      canvas.onmouseleave = () => { tooltip.style.display = 'none'; };
+      canvas.onmouseleave = () => {
+        clearHoverPoints();
+        tooltip.style.display = 'none';
+      };
     };
     const renderAll = () => document.querySelectorAll('.chart').forEach(render);
+    document.addEventListener('report-filter-change', renderAll);
+    document.querySelectorAll('details.chart-card').forEach((card) => card.addEventListener('toggle', renderAll));
     const setLanguage = (language) => {
       currentLanguage = language === 'en' ? 'en' : 'zh';
       document.documentElement.lang = currentLanguage === 'zh' ? 'zh-CN' : 'en';
@@ -4295,15 +6604,14 @@ function reportFilterScript() {
     if (checkboxes.length === 0) return;
     const pageCards = [...document.querySelectorAll('.page-card[data-bts-vm-name]')];
     const sharedBtsCards = [...document.querySelectorAll('.shared-bts-card[data-bts-vm-name]')];
-    const leakTable = document.querySelector('.shared-bts-leak-table');
-    const leakRows = [...document.querySelectorAll('.shared-bts-leak-table tbody tr[data-bts-vm-name]')];
+    const leakRows = [...document.querySelectorAll('.residual-card[data-bts-vm-name]')];
     const issueCards = [...document.querySelectorAll('.issue[data-bts-vm-names]')];
     const pageCount = document.querySelector('[data-filter-page-count]');
     const issueCount = document.querySelector('[data-filter-issue-count]');
     const conclusion = document.querySelector('[data-filter-conclusion]');
     const emptyPages = document.querySelector('[data-filter-empty="pages"]');
     const emptySharedBts = document.querySelector('[data-filter-empty="shared-bts"]');
-    const emptyLeakRows = document.querySelector('[data-filter-empty="shared-bts-leaks"]');
+    const emptyLeakRows = document.querySelector('[data-filter-empty="bts-slot-leaks"]');
     const selectedVmNames = () => new Set(checkboxes.filter((input) => input.checked).map((input) => input.value));
     const setVisible = (element, visible) => element.classList.toggle('filtered-out', !visible);
     const update = () => {
@@ -4326,7 +6634,11 @@ function reportFilterScript() {
         setVisible(row, visible);
         if (visible) visibleLeakRows += 1;
       });
-      if (leakTable) setVisible(leakTable, visibleLeakRows > 0);
+      const visibleResiduals = leakRows.filter((row) => !row.classList.contains('filtered-out'));
+      for (const [name, statuses] of [['confirmed', ['confirmed']], ['suspected', ['suspected', 'retained']], ['incomplete', ['pending', 'failed', 'insufficient']]]) {
+        const count = visibleResiduals.filter((row) => statuses.includes(row.dataset.status)).length;
+        document.querySelector('[data-residual-count="' + name + '"]').textContent = String(count);
+      }
       let visibleIssues = 0;
       issueCards.forEach((card) => {
         let vmNames = [];
@@ -4355,7 +6667,10 @@ function reportFilterScript() {
           : english
             ? 'No high- or medium-confidence memory issue matches the current BTS VM filter.'
             : '当前 BTS 虚拟机过滤条件下未发现规则命中的高或中置信度内存问题。';
+        const unresolved = visibleResiduals.filter((row) => ['pending', 'failed', 'insufficient', 'retained', 'suspected'].includes(row.dataset.status)).length;
+        if (unresolved) conclusion.textContent += english ? ' ' + unresolved + ' page(s) still require verification.' : ' 另有 ' + unresolved + ' 页待分析或核实，不能据此排除泄漏。';
       }
+      document.dispatchEvent(new Event('report-filter-change'));
     };
     checkboxes.forEach((checkbox) => checkbox.addEventListener('change', update));
     document.querySelectorAll('[data-language]').forEach((button) => {
@@ -4371,6 +6686,29 @@ function pageNavigationScript() {
     document.addEventListener('click', (event) => {
       const target = event.target;
       if (!(target instanceof Element)) return;
+      const download = target.closest('.download-residual');
+      if (download) {
+        const frame = download.closest('.residual-child').querySelector('iframe');
+        const url = URL.createObjectURL(new Blob([frame.srcdoc], { type: 'text/html' }));
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = 'instance-' + download.dataset.instance + '-residual.html';
+        link.click();
+        window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+        return;
+      }
+      const residualLink = target.closest('.residual-link');
+      if (residualLink) {
+        const card = document.getElementById(residualLink.getAttribute('href').slice(1));
+        if (!card) return;
+        event.preventDefault();
+        card.open = true;
+        const child = card.querySelector('.residual-child');
+        if (child) child.open = true;
+        history.pushState(null, '', '#' + card.id);
+        card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        return;
+      }
       const link = target.closest('.page-instance-link');
       if (!link) return;
       const instanceId = link.dataset.pageInstanceId;
@@ -4387,27 +6725,223 @@ function pageNavigationScript() {
   })();
   </script>`;
 }
+function reportNavigationScript() {
+    return `<script>
+  (() => {
+    const toc = document.querySelector('.report-toc');
+    const nav = toc.querySelector('nav');
+    const entries = [...nav.querySelectorAll('[data-report-target]')].map((link) => ({
+      link,
+      item: link.closest('li'),
+      target: document.getElementById(link.dataset.reportTarget),
+    })).filter((entry) => entry.target);
+    const narrow = window.matchMedia('(max-width: 1000px)');
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+    let visibleEntries = entries;
+    let activeEntry;
+    let navigationEntry;
+    let navigationPosition;
+    let scheduled = false;
+    const updateActive = () => {
+      scheduled = false;
+      if (navigationPosition !== undefined && navigationPosition !== window.scrollY) {
+        navigationEntry = undefined;
+        navigationPosition = undefined;
+      }
+      const offset = narrow.matches ? 88 : 40;
+      let current = visibleEntries[0];
+      for (const entry of visibleEntries) {
+        if (entry.target.getBoundingClientRect().top <= offset) current = entry;
+      }
+      if (window.scrollY > 0 && window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 2) {
+        // Near the footer, multiple anchors can share the same maximum scroll position.
+        const top = navigationEntry?.target.getBoundingClientRect().top;
+        if (top !== undefined && top >= 0 && top < window.innerHeight) {
+          current = navigationEntry;
+          navigationPosition = window.scrollY;
+        } else {
+          current = visibleEntries[visibleEntries.length - 1];
+        }
+      } else if (navigationEntry && Math.abs(navigationEntry.target.getBoundingClientRect().top -
+        parseFloat(getComputedStyle(navigationEntry.target).scrollMarginTop)) < 1) {
+        navigationEntry = undefined;
+      }
+      if (!current || current === activeEntry) return;
+      if (activeEntry) activeEntry.link.removeAttribute('aria-current');
+      activeEntry = current;
+      current.link.setAttribute('aria-current', 'location');
+      if (toc.open) {
+        const bounds = nav.getBoundingClientRect();
+        const item = current.link.getBoundingClientRect();
+        if (item.top < bounds.top) nav.scrollTop += item.top - bounds.top;
+        else if (item.bottom > bounds.bottom) nav.scrollTop += item.bottom - bounds.bottom;
+      }
+    };
+    const schedule = () => {
+      if (scheduled) return;
+      scheduled = true;
+      requestAnimationFrame(updateActive);
+    };
+    const sync = () => {
+      navigationEntry = undefined;
+      navigationPosition = undefined;
+      visibleEntries = entries.filter((entry) => {
+        const visible = !entry.target.classList.contains('filtered-out');
+        entry.item.hidden = !visible;
+        return visible;
+      });
+      schedule();
+    };
+    const navigate = (entry, behavior) => {
+      if (!entry || entry.item.hidden) return;
+      navigationEntry = entry;
+      navigationPosition = undefined;
+      for (let target = entry.target; target; target = target.parentElement) {
+        if (target instanceof HTMLDetailsElement) target.open = true;
+      }
+      if (narrow.matches) toc.open = false;
+      entry.target.tabIndex = -1;
+      entry.target.focus({ preventScroll: true });
+      requestAnimationFrame(() => {
+        entry.target.scrollIntoView({ behavior, block: 'start' });
+        schedule();
+      });
+    };
+    nav.addEventListener('click', (event) => {
+      if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      const link = event.target instanceof Element && event.target.closest('[data-report-target]');
+      if (!link) return;
+      event.preventDefault();
+      const entry = entries.find((item) => item.link === link);
+      if (!entry || entry.item.hidden) return;
+      if (location.hash !== link.hash) history.pushState(null, '', link.hash);
+      navigate(entry, reducedMotion.matches ? 'instant' : 'smooth');
+    });
+    const navigateHash = () => {
+      let id;
+      try { id = decodeURIComponent(location.hash.slice(1)); } catch { return; }
+      navigate(visibleEntries.find((entry) => entry.target.id === id), 'instant');
+    };
+    const resize = () => {
+      toc.open = !narrow.matches;
+      schedule();
+    };
+    narrow.addEventListener('change', resize);
+    window.addEventListener('scroll', schedule, { passive: true });
+    window.addEventListener('resize', schedule);
+    window.addEventListener('hashchange', navigateHash);
+    document.addEventListener('toggle', schedule, true);
+    document.addEventListener('report-filter-change', sync);
+    new ResizeObserver(schedule).observe(document.querySelector('main'));
+    resize();
+    sync();
+    navigateHash();
+  })();
+  </script>`;
+}
 function summaryConclusionCopy(result) {
-    if (result.issues.length > 0) {
-        return {
-            zh: result.summary.conclusion,
-            en: 'Rule-defined memory issues were detected. Review the highlighted findings and page-level evidence below.',
-        };
-    }
     return {
         zh: result.summary.conclusion,
-        en: 'No high- or medium-confidence memory issue was detected by the current rules.',
+        en: `${result.summary.issueCount} memory issue(s); ${result.summary.confirmedLeakPageCount} page(s) with leaks, ${result.summary.suspectedPageCount} requiring verification, and ${result.summary.incompletePageCount} with incomplete analysis or insufficient evidence.`,
     };
 }
-function generateMemoryAnalysisReport(result, outputPath) {
+function renderSourceBindings(result) {
+    const title = `<h3 id="source-origins">${localized(SNAPSHOT_SUBSECTIONS['source-origins'])}</h3>`;
+    const sources = result.frontendSources;
+    if (!sources)
+        return `${title}<p class="empty">${localized({
+            zh: '未提供源码绑定资料；仍可浏览堆快照。',
+            en: 'No source binding data was supplied; heap snapshots remain available.',
+        })}</p>`;
+    const artifacts = sources.artifacts ?? [];
+    const projects = sources.projects ?? [];
+    const code = (text) => `<code>${escapeHtml(text || '-')}</code>`;
+    const key = (candidate) => JSON.stringify([candidate.projectId, candidate.script]);
+    const selectedUses = new Map();
+    const candidateUses = new Set();
+    for (const snapshot of result.snapshots) {
+        const locations = sources.snapshots[snapshot.snapshotId]?.locations;
+        for (const binding of Object.values(locations?.bindings ?? {})) {
+            for (const candidate of binding.candidates)
+                candidateUses.add(key(candidate));
+            if (binding.selected) {
+                const selected = key(binding.selected);
+                selectedUses.set(selected, (selectedUses.get(selected) ?? 0) + 1);
+            }
+        }
+    }
+    const origin = (project) => project
+        ? `${code(project.id)} · ${localized(project.lynx ? { zh: 'Lynx 公共脚本', en: 'Lynx runtime' } : { zh: '业务工程', en: 'Application project' })}
+      <br>${localized(project.origin?.kind === 'git' ? { zh: 'Git 仓库', en: 'Git repository' } : { zh: '本地工程', en: 'Local project' })}
+      ${project.origin?.url ? `<br>${code(project.origin.url)}` : ''}
+      ${project.root ? `<br>${code(project.root)}` : ''}
+      ${project.origin?.ref ? `<br>ref: ${code(project.origin.ref)}` : ''}
+      ${project.commit ? `<br>commit: ${code(project.commit)}` : ''}
+      ${project.artifactOrigin
+            ? `<br>${localized({ zh: '独立产物来源', en: 'Separate artifact origin' })}: ${code(project.artifactOrigin.kind)} ${code(project.artifactOrigin.locator)}
+      ${project.artifactOrigin.ref ? `<br>artifact ref: ${code(project.artifactOrigin.ref)}` : ''}
+      ${project.artifactOrigin.commit ? `<br>artifact commit: ${code(project.artifactOrigin.commit)}` : ''}`
+            : ''}
+      ${project.lynx ? `<br>${escapeHtml(project.lynx.platform)} · ${escapeHtml(project.lynx.selection.kind)} ${code(project.lynx.selection.requested)}` : ''}`
+        : '-';
+    const inventoryRows = artifacts.map((artifact) => {
+        const uses = selectedUses.get(key(artifact)) ?? 0;
+        const status = uses
+            ? { zh: `已绑定 ${uses} 个快照脚本`, en: `Bound to ${uses} snapshot scripts` }
+            : candidateUses.has(key(artifact))
+                ? { zh: '候选，未绑定', en: 'Candidate, not bound' }
+                : { zh: '已提供，未引用', en: 'Supplied, not referenced' };
+        return `<tr data-source-artifact class="${uses ? 'source-bound' : 'source-unbound'}">
+      <td>${origin(projects.find((project) => project.id === artifact.projectId))}</td>
+      <td>JS: ${code(artifact.script)}<br>${artifact.inlineMap ? localized({ zh: '内联 sourcemap', en: 'Inline sourcemap' }) : 'Map'}: ${code(artifact.map)}</td>
+      <td>${localized(artifact.map
+            ? { zh: 'JS / map 已准备', en: 'JS / map prepared' }
+            : { zh: '仅生成 JS；未提供 sourcemap', en: 'Generated JS only; no sourcemap supplied' })}<br>${localized({
+            zh: `${artifact.sourceFileCount} 个已校验原始文件`,
+            en: `${artifact.sourceFileCount} validated original files`,
+        })}<br><span class="source-binding-status">${localized(status)}</span></td>
+      <td><details><summary>SHA-256</summary>JS: ${code(artifact.scriptSha256)}<br>Map: ${code(artifact.mapSha256)}</details></td></tr>`;
+    });
+    for (const project of projects.filter((project) => !artifacts.some((artifact) => artifact.projectId === project.id))) {
+        inventoryRows.push(`<tr data-source-project class="source-unbound"><td>${origin(project)}</td><td>-</td><td>${localized(project.abandoned
+            ? { zh: '已跳过（用户同意）', en: 'Skipped with user agreement' }
+            : { zh: '产物清单未保存', en: 'Artifact inventory not saved' })}</td><td>${escapeHtml(project.abandoned?.reason ?? '-')}</td></tr>`);
+    }
+    const table = (id, headers, rows) => `<div class="report-table-wrap"><table class="source-table" id="${id}">
+    <thead><tr>${headers.map((header) => `<th>${localized(header)}</th>`).join('')}</tr></thead>
+    <tbody>${rows.join('')}</tbody></table></div>`;
+    return `${title}
+    <p class="muted">${localized({
+        zh: '下表列出已提供的源码产物及绑定状态。准备记录不代表当前文件仍在本机；函数偏移匹配不等于捕获脚本的完整哈希校验，也不改变泄漏结论。',
+        en: 'Supplied source artifacts and binding status are listed below. Preparation records do not imply files still exist locally; function offset alignment is not a full captured-script hash check and does not change leak conclusions.',
+    })}</p>
+    ${!sources.artifacts ? `<p class="notice">${localized({ zh: '旧分析数据未保存完整产物清单，以下仅展示已保存的来源。', en: 'Legacy analysis data has no complete artifact inventory; only saved provenance is shown.' })}</p>` : ''}
+    ${inventoryRows.length
+        ? table('source-inventory', [
+            { zh: '工程 / 来源 / 版本', en: 'Project / origin / revision' },
+            { zh: '生成 JS / sourcemap', en: 'Generated JS / sourcemap' },
+            { zh: '准备与使用状态', en: 'Preparation and use' },
+            { zh: '哈希 / 原因', en: 'Hashes / reason' },
+        ], inventoryRows)
+        : `<p class="empty">${localized({ zh: '没有已准备的源码产物。', en: 'No prepared source artifacts.' })}</p>`}
+    ${sources.warnings.length ? `<ul class="notice warning">${sources.warnings.map((warning) => `<li>${escapeHtml(warning)}</li>`).join('')}</ul>` : ''}`;
+}
+function generateMemoryAnalysisReport(result, outputPath, snapshots) {
     const charts = [
-        ...result.pages.flatMap((page) => [page.analysis.memoryChart, page.analysis.componentChart, ...page.analysis.trendCharts].filter((chart) => chart !== undefined)),
-        ...result.sharedBtsHeapCharts,
+        ...result.pages.flatMap((page) => [
+            page.analysis.memoryChart,
+            page.analysis.componentChart,
+            page.analysis.graphicMemoryChart,
+            page.analysis.canvasResourceChart,
+            ...page.analysis.trendCharts,
+        ].filter((chart) => chart !== undefined)),
+        ...result.sharedBtsSlotCharts,
+        ...globalGraphicGroups(result).flatMap((group) => [group.memoryChart, group.countChart]),
     ];
     const warningHtml = result.warnings.length === 0
         ? `<div class="notice success">${localized({
-            zh: 'Trace 数据完整，未发现前置分析限制。',
-            en: 'Trace data is complete; no pre-analysis limitation was found.',
+            zh: '未发现基础指标分析的前置限制；对象证据覆盖见各页面 residual 分析。',
+            en: 'No prerequisite limitation for base metrics was detected; see each residual analysis for object coverage.',
         })}</div>`
         : result.warnings.map((warning) => `<div class="notice warning">${localized(knownCopy(warning))}</div>`).join('');
     const issuesHtml = result.issues.length === 0
@@ -4416,10 +6950,8 @@ function generateMemoryAnalysisReport(result, outputPath) {
             en: 'No rule-defined high- or medium-confidence issue was found.',
         })}</div>`
         : result.issues.map((issue) => renderIssue(issue, result)).join('');
-    const pagesHtml = [...result.pages]
-        .sort((a, b) => a.realCreateTsMs - b.realCreateTsMs)
-        .map((page) => renderPage(page, result))
-        .join('');
+    const sortedPages = [...result.pages].sort((a, b) => a.realCreateTsMs - b.realCreateTsMs);
+    const pagesHtml = sortedPages.map((page) => renderPage(page, result)).join('');
     const html = `<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -4427,10 +6959,23 @@ function generateMemoryAnalysisReport(result, outputPath) {
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Lynx 内存分析报告</title>
   <style>
-    :root { color-scheme: light; --ink:#162033; --muted:#64748b; --line:#dbe3ee; --panel:#fff; --bg:#f4f7fb; --accent:#2457d6; --danger:#b42318; }
+    :root { scrollbar-gutter:stable; color-scheme: light; --ink:#162033; --muted:#64748b; --line:#dbe3ee; --panel:#fff; --bg:#f4f7fb; --accent:#2457d6; --danger:#b42318; }
+    html:not([lang="en"]) .finding-copy[lang="en"], html[lang="en"] .finding-copy[lang="zh"] { display:none; }
     * { box-sizing: border-box; }
     body { margin:0; background:var(--bg); color:var(--ink); font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
-    main { max-width:1240px; margin:0 auto; padding:40px 24px 80px; }
+    .report-layout { display:grid; grid-template-columns:240px minmax(0,1fr); gap:32px; max-width:1520px; margin:0 auto; padding:40px 24px 80px; }
+    main { min-width:0; }
+    main > section[id], #snapshots > h3[id], .page-card, .residual-card { scroll-margin-top:24px; }
+    .report-sidebar { position:sticky; top:24px; align-self:start; min-width:0; }
+    .report-toc { border:1px solid var(--line); border-radius:12px; background:var(--panel); overflow:hidden; }
+    .report-toc > summary { padding:12px 16px; font-weight:700; cursor:pointer; }
+    .report-toc nav { max-height:calc(100vh - 112px); overflow-y:auto; overscroll-behavior:contain; padding:0 8px 12px; }
+    .report-toc ul { list-style:none; margin:0; padding:0; }
+    .report-toc ul ul { margin:2px 0 6px 14px; padding-left:8px; border-left:1px solid var(--line); }
+    .report-toc a { display:block; padding:8px 10px; border-radius:7px; color:var(--muted); text-decoration:none; font-size:13px; line-height:1.5; overflow-wrap:anywhere; }
+    .report-toc a:hover { background:#f1f5f9; color:var(--ink); }
+    .report-toc a[aria-current="location"] { color:var(--accent); background:#eaf0ff; font-weight:650; }
+    .report-toc a:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
     h1 { margin:0 0 6px; font-size:30px; letter-spacing:-.02em; }
     h2 { margin:36px 0 16px; font-size:22px; }
     h3 { margin:24px 0 10px; font-size:17px; }
@@ -4460,7 +7005,11 @@ function generateMemoryAnalysisReport(result, outputPath) {
     .issue-title { color:var(--danger); font-weight:700; font-size:15px; }
     .issue p { margin:5px 0; }
     .badge { display:inline-block; border-radius:999px; padding:2px 8px; font-size:11px; font-weight:700; vertical-align:middle; }
-    .confidence.high { background:#fee2e2; color:#991b1b; }
+    .confirmed-status { color:var(--danger); }
+    .badge.leak { background:#fee2e2; color:var(--danger); }
+    .badge.observation { background:#dcfce7; color:#166534; }
+    .badge.non-leak { background:#fef3c7; color:#92400e; }
+    .confidence.high { background:#dbeafe; color:#1d4ed8; }
     .confidence.medium { background:#fef3c7; color:#92400e; }
     .confidence.low { background:#e2e8f0; color:#475569; }
     .selected { background:#dbeafe; color:#1d4ed8; margin-left:7px; }
@@ -4477,6 +7026,7 @@ function generateMemoryAnalysisReport(result, outputPath) {
     th,td { border-bottom:1px solid var(--line); padding:9px 10px; text-align:left; vertical-align:top; }
     th { color:#475569; font-weight:600; background:#f8fafc; }
     .basic-info th { width:190px; }
+    .url-cell { max-width:420px; overflow-wrap:anywhere; word-break:break-word; }
     .analysis-item { margin:16px 0; border:1px solid var(--line); border-radius:9px; padding:14px; }
     .analysis-item strong { font-size:20px; }
     .analysis-item p { margin:4px 0; color:var(--muted); }
@@ -4484,6 +7034,8 @@ function generateMemoryAnalysisReport(result, outputPath) {
     .issue-row td { background:#fff7ed; }
     .notes { color:var(--muted); }
     .chart-card { margin:18px 0; border:1px solid var(--line); border-radius:10px; padding:14px; overflow:hidden; }
+    .chart-card summary { font-weight:650; cursor:pointer; }
+    .chart-note { color:var(--muted); font-size:12px; line-height:1.6; }
     .shared-bts-card { margin:18px 0; border:1px solid var(--line); border-radius:10px; background:var(--panel); overflow:hidden; }
     .shared-bts-card > summary { padding:14px 16px; cursor:pointer; font-weight:700; }
     .shared-bts-card[open] > summary { border-bottom:1px solid var(--line); }
@@ -4492,6 +7044,7 @@ function generateMemoryAnalysisReport(result, outputPath) {
     .shared-bts-analysis-grid .analysis-item { margin:0; }
     .chart { position:relative; width:100%; min-height:320px; overflow-x:auto; }
     .chart canvas { display:block; }
+    .chart-hover-overlay { position:absolute; z-index:1; left:0; top:0; pointer-events:none; }
     .chart-legend { display:flex; flex-wrap:wrap; gap:7px; padding:8px 4px 2px 72px; }
     .chart-legend-item { display:inline-flex; align-items:center; gap:7px; border:1px solid var(--line); border-radius:999px; padding:4px 9px; color:#334155; background:#fff; cursor:pointer; font-size:12px; }
     .chart-legend-item:hover { border-color:#94a3b8; background:#f8fafc; }
@@ -4500,17 +7053,54 @@ function generateMemoryAnalysisReport(result, outputPath) {
     .chart-legend-item.hidden span { text-decoration:line-through; }
     .chart-event-legend-item { display:inline-flex; align-items:center; gap:7px; padding:4px 3px; color:#475569; font-size:12px; }
     .chart-event-legend-item i { width:10px; height:10px; border-radius:4px; }
-    .chart-tooltip { display:none; position:absolute; z-index:2; min-width:220px; max-width:300px; padding:10px 12px; background:rgba(15,23,42,.94); color:#fff; border-radius:7px; pointer-events:none; font-size:12px; }
-    .chart-tooltip.event-tooltip { min-width:440px; max-width:600px; }
+    .chart-tooltip { display:none; position:absolute; z-index:2; width:max-content; max-width:none; padding:6px; background:rgba(0,0,0,.8); color:#fff; border-radius:6px; pointer-events:none; font-size:12px; line-height:1.3; white-space:nowrap; }
+    .chart-tooltip.event-tooltip { width:auto; min-width:440px; max-width:600px; padding:10px 12px; background:rgba(15,23,42,.94); white-space:normal; }
     .chart-tooltip div { margin-top:3px; }
     .chart-tooltip i { display:inline-block; width:9px; height:9px; margin-right:7px; border-radius:50%; }
     .chart-tooltip .tooltip-url { overflow-wrap:anywhere; word-break:break-word; }
     .mono { font:12px ui-monospace,SFMono-Regular,Menlo,monospace; word-break:break-all; }
     footer { margin-top:40px; color:var(--muted); text-align:center; }
-    @media (max-width:800px) { .summary-grid,.shared-bts-analysis-grid { grid-template-columns:repeat(1,minmax(0,1fr)); } .header-top { align-items:flex-start; } main { padding:24px 12px 50px; } }
+    .residual-card { margin:16px 0; border:1px solid #cbd5e1; border-radius:12px; overflow:hidden; }
+    .pf-memory-report-frame { position:fixed; inset:0; width:100%; height:100%; border:0; z-index:10000; background:transparent; }
+    .residual-card > summary { padding:18px; background:#f1f5f9; cursor:pointer; font-weight:650; }
+    .residual-body { padding:18px; }
+    .residual-table-wrap, .report-table-wrap { overflow-x:auto; }
+    .source-table { table-layout:fixed; min-width:760px; }
+    .source-table th, .source-table td { overflow-wrap:anywhere; vertical-align:top; }
+    .source-table code { white-space:normal; font-size:12px; }
+    .source-table .source-bound .source-binding-status { color:#15803d; font-weight:600; }
+    .source-table .source-unbound { color:var(--muted); }
+    .source-table .source-unbound * { color:inherit; }
+    #source-inventory th:nth-child(1) { width:30%; }
+    #source-inventory th:nth-child(2) { width:35%; }
+    #source-inventory th:nth-child(4) { width:13%; }
+    .cache-breakdown { margin:12px 0; }
+    .cache-breakdown table { width:100%; table-layout:fixed; }
+    .cache-breakdown th:nth-child(1) { width:23%; }
+    .cache-breakdown th:nth-child(2) { width:14%; }
+    .cache-breakdown th:nth-child(4) { width:20%; }
+    .cache-breakdown td { overflow-wrap:anywhere; vertical-align:top; }
+    .cache-breakdown td:first-child .badge { margin-left:4px; white-space:nowrap; }
+    /* Same string color as snapshot_viewer.scss in the report's light theme. */
+    .allocation-string { color:var(--pf-color-success, rgb(0, 128, 0)); white-space:pre-wrap; }
+    .allocation-string, .cache-path { font-size:12px; }
+    .cache-path { color:var(--text-secondary); margin:4px 0 8px; }
+    .residual-card td { overflow-wrap:anywhere; }
+    .residual-child > summary { cursor:pointer; padding:16px 0; font-weight:650; }
+    .residual-child iframe { width:100%; height:850px; border:1px solid #e2e8f0; margin-top:12px; }
+    @media (max-width:1000px) {
+      .report-layout { grid-template-columns:minmax(0,1fr); gap:20px; padding:16px 16px 50px; }
+      .report-sidebar { top:12px; z-index:10; }
+      .report-toc { box-shadow:0 4px 16px rgba(33,54,91,.08); }
+      .report-toc nav { max-height:50vh; }
+      main > section[id], #snapshots > h3[id], .page-card, .residual-card { scroll-margin-top:76px; }
+    }
+    @media (max-width:800px) { .summary-grid,.shared-bts-analysis-grid { grid-template-columns:repeat(1,minmax(0,1fr)); } .header-top { align-items:flex-start; } }
   </style>
 </head>
-<body><main>
+<body><div class="report-layout">
+${renderReportNavigation(sortedPages, result.residualAnalyses, globalGraphicGroups(result).length > 0)}
+<main>
   <header>
     <div class="header-top">
       <h1>${localized({ zh: 'Lynx 内存分析', en: 'Lynx Memory Analysis' })}</h1>
@@ -4521,8 +7111,8 @@ function generateMemoryAnalysisReport(result, outputPath) {
     </div>
     <div class="subtitle">Trace ${escapeHtml(formatTimestamp(result.trace.startTsMs, result.trace.startTsMs))} –
       ${escapeHtml(formatTimestamp(result.trace.endTsMs, result.trace.startTsMs))} ·
-      ${localized({ zh: '内存采集', en: 'Memory trace' })} ${localized(result.trace.memoryTraceEnabled ? { zh: '已开启', en: 'Enabled' } : { zh: '未开启', en: 'Disabled' })} ·
-      ${localized({ zh: '强制 GC', en: 'Force GC' })} ${localized(result.trace.forceGc ? { zh: '已开启', en: 'Enabled' } : { zh: '未开启', en: 'Disabled' })}</div>
+      ${localized({ zh: '内存采集', en: 'Memory trace' })} ${localized(result.trace.memoryTraceEnabled ? { zh: '已开启', en: 'Enabled' } : { zh: '未开启', en: 'Disabled' })}</div>
+    ${result.artifacts ? `<p><a href="#snapshots" data-snapshot-viewer>${localized({ zh: '浏览 Trace 快照', en: 'Browse trace snapshots' })}</a> · <a href="${escapeHtml(result.artifacts.trace.file)}" download>${localized({ zh: '下载原始 Trace', en: 'Download source trace' })}</a></p>` : ''}
   </header>
   <div class="summary-grid">
     <div class="metric"><strong>${result.summary.pageCount}</strong>${localized({ zh: '页面实例', en: 'Page instances' })}</div>
@@ -4530,24 +7120,31 @@ function generateMemoryAnalysisReport(result, outputPath) {
     <div class="metric"><strong>${result.summary.vmCount}</strong>${localized({ zh: '虚拟机', en: 'Virtual machines' })}</div>
     <div class="metric"><strong>${result.summary.snapshotCount}</strong>${localized({ zh: '堆快照', en: 'Heap snapshots' })}</div>
     <div class="metric"><strong data-filter-issue-count>${result.summary.issueCount}</strong><span>Issue</span></div>
+    <div class="metric"><strong data-residual-count="confirmed">${result.summary.confirmedLeakPageCount}</strong>${localized({ zh: '泄漏页面', en: 'Leak pages' })}</div>
+    <div class="metric"><strong data-residual-count="suspected">${result.summary.suspectedPageCount}</strong>${localized({ zh: '待核实页面', en: 'Pages to verify' })}</div>
+    <div class="metric"><strong data-residual-count="incomplete">${result.summary.incompletePageCount}</strong>${localized({ zh: '未完成 / 证据不足', en: 'Incomplete / insufficient evidence' })}</div>
   </div>
-  <section><h2>${localized({ zh: '前置说明', en: 'Notes before analysis' })}</h2>${warningHtml}</section>
+  <section id="analysis-notes"><h2>${localized(REPORT_SECTIONS['analysis-notes'])}</h2>${warningHtml}</section>
   ${renderReportFilter(result)}
-  <section class="page-analysis-section"><h2>${localized({ zh: '页面实例分析', en: 'Page instance analysis' })}</h2>${pagesHtml ||
+  <section id="page-analysis" class="page-analysis-section"><h2>${localized(REPORT_SECTIONS['page-analysis'])}</h2>${pagesHtml ||
         `<p class="empty">${localized({ zh: '没有找到 Lynx 页面实例。', en: 'No Lynx page instance was found.' })}</p>`}<p class="empty filter-empty" data-filter-empty="pages">${localized({
         zh: '当前过滤条件下没有页面实例分析结果。',
         en: 'No page instance analysis matches the current filter.',
     })}</p></section>
-  ${renderFurtherAnalysis(result)}
-  <section class="conclusion-section"><h2>${localized({ zh: '结论', en: 'Conclusion' })}</h2><div data-filter-conclusion class="notice ${result.issues.length ? 'warning' : 'success'}">${localized(summaryConclusionCopy(result))}</div>${issuesHtml}</section>
+  ${renderVmAndSnapshotSections(result)}
+  <section id="conclusion" class="conclusion-section"><h2>${localized(REPORT_SECTIONS.conclusion)}</h2>
+  ${(result.analystNotes ?? []).map((note) => `<p class="analyst-note">${localized(note)}</p>`).join('')}
+  <div data-filter-conclusion class="notice ${result.issues.length ? 'warning' : 'success'}">${localized(summaryConclusionCopy(result))}</div>${issuesHtml}</section>
   <footer>${localized({
         zh: '由 @lynx-js/trace-query 内存分析生成',
         en: 'Generated by @lynx-js/trace-query memory analysis',
     })}</footer>
-</main>
+</main></div>
 ${chartScript(charts, result.trace.startTsMs)}
 ${reportFilterScript()}
 ${pageNavigationScript()}
+${reportNavigationScript()}
+${snapshots ? `<script type="application/json" id="memory-report-snapshots">${JSON.stringify(snapshots).replace(/</g, '\\u003c')}</script><script src="assets/bridge.js"></script>` : ''}
 </body></html>`;
     const resolvedPath = path.resolve(outputPath);
     fs.mkdirSync(path.dirname(resolvedPath), { recursive: true });
@@ -4555,6 +7152,966 @@ ${pageNavigationScript()}
     return resolvedPath;
 }
 //# sourceMappingURL=memory_analysis_report.js.map
+
+/***/ },
+
+/***/ 9176
+(__unused_webpack_module, exports) {
+
+
+// Copyright 2026 The Lynx Authors. All rights reserved.
+// Licensed under the Apache License Version 2.0 that can be found in the
+// LICENSE file in the root directory of this source tree.
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.importCacheBreakdown = importCacheBreakdown;
+function object(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value))
+        throw new Error('Invalid cache evidence object');
+    return value;
+}
+function array(value) {
+    if (!Array.isArray(value))
+        throw new Error('Invalid cache evidence array');
+    return value;
+}
+function count(value) {
+    if (!Number.isSafeInteger(value) || value < 0)
+        throw new Error('Invalid cache evidence number');
+    return value;
+}
+function text(value) {
+    if (typeof value !== 'string' || !value)
+        throw new Error('Invalid cache evidence text');
+    return value;
+}
+/** Recompute mutually exclusive rows from measured allocations, never prose or sampled objects. */
+function importCacheBreakdown(evidence, finding, refs, context) {
+    if (finding['allocation_breakdown'] === undefined)
+        return undefined;
+    const spec = object(finding['allocation_breakdown']);
+    const ref = text(spec['evidence_ref']);
+    const match = /^\/snapshots\/(\d+)\/residual\/cache_retention$/.exec(ref);
+    if (!match || !refs.includes(ref))
+        throw new Error('Cache breakdown must reference its measured evidence');
+    const snapshot = object(array(evidence['snapshots'])[Number(match[1])]);
+    const identities = context.snapshots.filter((s) => s.sha256 === snapshot['sha256']);
+    if (identities.length !== 1)
+        throw new Error('Cache breakdown requires unique snapshot identity');
+    const nodeCount = count(snapshot['node_count']);
+    const residual = object(snapshot['residual']);
+    const measured = object(residual['cache_retention']);
+    const generic = measured['version'] === 'holder-retention-2';
+    if (!generic && measured['version'] !== 'vm-cache-retention-1')
+        throw new Error('Unsupported retention evidence');
+    const node = (raw) => {
+        const n = object(raw);
+        const result = { nodeIndex: count(n['ord']), nodeId: count(n['id']), bytes: count(n['self']) };
+        if (result.nodeIndex >= nodeCount)
+            throw new Error('Cache node ordinal out of bounds');
+        return result;
+    };
+    const owners = new Map();
+    const declared = new Map();
+    if (generic) {
+        // All findings for this snapshot contribute their explicit holder
+        // selections. The representative_objects display limit does not apply.
+        for (const raw of array(object(evidence['analysis'])['findings'])) {
+            const related = object(raw);
+            if (!related['allocation_breakdown'])
+                continue;
+            const selection = object(related['allocation_breakdown']);
+            if (selection['evidence_ref'] !== ref)
+                continue;
+            const relatedRefs = array(related['evidence_refs']).map(text);
+            const seen = new Set();
+            for (const rawHolder of array(selection['holders'])) {
+                const holder = object(rawHolder);
+                const label = text(holder['label']);
+                const pointer = text(holder['evidence_ref']);
+                if (!label.trim() ||
+                    label.length > 80 ||
+                    !/^\/(?:snapshots|queries)\/\d+\//.test(pointer) ||
+                    /~(?![01])/u.test(pointer) ||
+                    /\/residual\/cache_retention(?:\/|$)/.test(pointer) ||
+                    !relatedRefs.some((parent) => pointer === parent || pointer.startsWith(`${parent}/`)))
+                    throw new Error('Invalid declared holder evidence reference');
+                let current = evidence;
+                let hash;
+                for (const token of pointer.slice(1).split('/')) {
+                    if (!current || typeof current !== 'object')
+                        throw new Error('Unresolved holder evidence reference');
+                    const entry = current;
+                    hash = entry['snapshot_sha256'] ?? entry['sha256'] ?? hash;
+                    const key = token.replace(/~1/g, '/').replace(/~0/g, '~');
+                    if (!Object.prototype.hasOwnProperty.call(entry, key))
+                        throw new Error('Unresolved holder evidence reference');
+                    current = entry[key];
+                }
+                const n = node(current);
+                const identity = JSON.stringify([n.nodeIndex, label]);
+                if (hash !== snapshot['sha256'] || seen.has(identity))
+                    throw new Error('Ambiguous or duplicate declared holder');
+                seen.add(identity);
+                declared.set(JSON.stringify([label, pointer]), n);
+            }
+        }
+    }
+    const verified = new Set();
+    for (const raw of array(measured['owners'])) {
+        const owner = object(raw);
+        const n = node(owner['node']);
+        const labels = array(owner['labels']).map(text);
+        if (owners.has(n.nodeIndex) ||
+            !labels.length ||
+            new Set(labels).size !== labels.length ||
+            labels.some((label) => !label.trim() || label.length > 80) ||
+            !array(owner['root_path']).length)
+            throw new Error('Invalid cache owner identity');
+        if (generic) {
+            const sources = array(owner['sources']).map(object);
+            if (!sources.length || labels.some((label) => !sources.some((source) => source['label'] === label)))
+                throw new Error('Missing holder selection evidence');
+            for (const source of sources) {
+                const key = JSON.stringify([text(source['label']), text(source['evidence_ref'])]);
+                const selected = declared.get(key);
+                if (!labels.includes(source['label']) ||
+                    !selected ||
+                    selected.nodeId !== n.nodeId ||
+                    selected.nodeIndex !== n.nodeIndex)
+                    throw new Error('Measured holder differs from the declared evidence');
+                verified.add(key);
+            }
+            let from = 0;
+            const visited = new Set([from]);
+            for (const rawStep of array(owner['root_path'])) {
+                const step = object(rawStep), to = node(step['to']);
+                if (node(step['from']).nodeIndex !== from ||
+                    visited.has(to.nodeIndex) ||
+                    object(step['edge'])['type'] === 'weak')
+                    throw new Error('Invalid holder root path');
+                from = to.nodeIndex;
+                visited.add(from);
+            }
+            if (from !== n.nodeIndex || node(object(array(owner['root_path']).at(-1))['to']).nodeId !== n.nodeId)
+                throw new Error('Holder root path does not reach the selected node');
+        }
+        else if (!array(owner['identity_edges']).length)
+            throw new Error('Missing legacy cache identity');
+        owners.set(n.nodeIndex, { label: labels.join(' / '), labels, nodeIndex: n.nodeIndex, nodeId: n.nodeId });
+    }
+    if (verified.size !== declared.size)
+        throw new Error('Declared holders have not been measured');
+    const labelCounts = new Map();
+    for (const owner of owners.values())
+        labelCounts.set(owner.label, (labelCounts.get(owner.label) ?? 0) + 1);
+    for (const owner of owners.values()) {
+        if (labelCounts.get(owner.label) > 1)
+            owner.label += ` @${owner.nodeId}`;
+    }
+    const pending = new Map();
+    for (const raw of array(residual['unclassified'])) {
+        const n = node(raw);
+        if (pending.has(n.nodeId))
+            throw new Error('Duplicate unclassified allocation');
+        pending.set(n.nodeId, n);
+    }
+    if ([...pending.values()].reduce((sum, n) => sum + n.bytes, 0) !== count(residual['unclassified_bytes']) ||
+        count(residual['target_bytes']) !== count(residual['known_non_leak_bytes']) + count(residual['unclassified_bytes']))
+        throw new Error('Cache allocation totals do not reconcile');
+    const selected = array(spec['node_ids']).map(count);
+    if (new Set(selected).size !== selected.length)
+        throw new Error('Duplicate selected cache allocation');
+    const wanted = new Set(selected);
+    const rows = new Map();
+    const ords = new Set();
+    for (const raw of array(measured['allocations'])) {
+        const allocation = object(raw);
+        const n = node(allocation['node']);
+        const expected = pending.get(n.nodeId);
+        const type = text(object(allocation['node'])['type']);
+        let stringPreview;
+        if (allocation['string_preview'] !== undefined) {
+            const preview = object(allocation['string_preview']);
+            if (!['string', 'concatenated string', 'sliced string'].includes(type) ||
+                typeof preview['text'] !== 'string' ||
+                preview['text'].length > 256 ||
+                typeof preview['truncated'] !== 'boolean')
+                throw new Error('Invalid allocation string preview');
+            const length = [...preview['text']].length;
+            if (length > 128 || (preview['truncated'] && length !== 128))
+                throw new Error('Invalid allocation string preview length');
+            stringPreview = { text: preview['text'], truncated: preview['truncated'] };
+        }
+        const otherRoot = allocation['other_root'];
+        const gcAtom = allocation['gc_atom'];
+        if (!expected ||
+            expected.nodeIndex !== n.nodeIndex ||
+            expected.bytes !== n.bytes ||
+            ords.has(n.nodeIndex) ||
+            typeof otherRoot !== 'boolean' ||
+            typeof gcAtom !== 'boolean' ||
+            (gcAtom && (context.engineMode !== 'gc' || type !== 'string')))
+            throw new Error('Cache allocation identity or engine mode mismatch');
+        pending.delete(n.nodeId);
+        ords.add(n.nodeIndex);
+        const routes = array(allocation['owner_paths'])
+            .map((rawRoute) => {
+            const route = object(rawRoute);
+            const owner = owners.get(count(route['owner_ord']));
+            if (!owner)
+                throw new Error('Unknown cache owner');
+            let from = owner.nodeIndex;
+            const visited = new Set([from]);
+            const names = array(route['edges']).map((rawEdge) => {
+                const edge = object(rawEdge);
+                count(edge['index']);
+                const to = count(edge['to_ord']);
+                if (edge['from_ord'] !== from || to >= nodeCount || visited.has(to) || edge['type'] === 'weak')
+                    throw new Error('Invalid cache retention path');
+                from = to;
+                visited.add(to);
+                return text(edge['name']);
+            });
+            if (from !== n.nodeIndex)
+                throw new Error('Cache path does not reach allocation');
+            return { owner, path: `${owner.label} → ${names.join(' → ') || `@${n.nodeId}`}` };
+        })
+            .sort((a, b) => a.owner.nodeIndex - b.owner.nodeIndex);
+        const ownerOrds = routes.map((r) => r.owner.nodeIndex);
+        if (new Set(ownerOrds).size !== ownerOrds.length)
+            throw new Error('Duplicate cache owner path');
+        if (!wanted.delete(n.nodeId))
+            continue;
+        const key = JSON.stringify([ownerOrds, otherRoot, gcAtom]);
+        if (!rows.has(key))
+            rows.set(key, { bytes: 0, count: 0, owners: routes.map((r) => r.owner), otherRoot, gcAtom, samples: [] });
+        const row = rows.get(key);
+        row.bytes += n.bytes;
+        row.count++;
+        if (row.samples.length < 10)
+            row.samples.push({ ...n, type, stringPreview, paths: routes.map((r) => r.path) });
+    }
+    if (pending.size || wanted.size)
+        throw new Error('Incomplete cache allocation coverage');
+    return {
+        snapshotId: identities[0].snapshotId,
+        bytes: [...rows.values()].reduce((sum, row) => sum + row.bytes, 0),
+        nodeIds: selected,
+        rows: [...rows.values()],
+    };
+}
+//# sourceMappingURL=memory_cache_retention.js.map
+
+/***/ },
+
+/***/ 6377
+(__unused_webpack_module, exports, __webpack_require__) {
+
+
+// Copyright 2026 The Lynx Authors. All rights reserved.
+// Licensed under the Apache License Version 2.0 that can be found in the
+// LICENSE file in the root directory of this source tree.
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.residualInputDigest = residualInputDigest;
+exports.residualAnalyzerContext = residualAnalyzerContext;
+exports.prepareMemoryResidualAnalysis = prepareMemoryResidualAnalysis;
+exports.applyMemoryResidualResults = applyMemoryResidualResults;
+exports.refreshResidualSummary = refreshResidualSummary;
+const crypto_1 = __webpack_require__(6982);
+const fs = __importStar(__webpack_require__(9896));
+const path = __importStar(__webpack_require__(6928));
+const query_memory_snapshot_1 = __webpack_require__(1919);
+const memory_cache_retention_1 = __webpack_require__(9176);
+function digest(value) {
+    return (0, crypto_1.createHash)('sha256').update(JSON.stringify(value)).digest('hex');
+}
+function residualInputDigest(result, analysis) {
+    const page = result.pages.find((item) => item.instanceId === analysis.instanceId);
+    const vm = result.vms.find((item) => item.id === analysis.vmId);
+    return digest({
+        trace: result.trace,
+        page: [page?.instanceId, page?.url, page?.btsCreateTsMs, analysis.destroyTsMs],
+        vm: [vm?.id, vm?.ptr, vm?.generation, vm?.createTsMs, vm?.destroyTsMs, vm?.type, page?.btsVmType],
+        slot: analysis.slotId,
+        snapshots: analysis.snapshotIds.map((id) => {
+            const snapshot = result.snapshots.find((item) => item.snapshotId === id);
+            if (!snapshot)
+                throw new Error(`Missing snapshot metadata: ${id}`);
+            const metadata = { ...snapshot };
+            delete metadata.outputPath;
+            delete metadata.extractionError;
+            return metadata;
+        }),
+    });
+}
+function residualAnalyzerContext(result, analysis) {
+    const type = result.vms.find((vm) => vm.id === analysis.vmId)?.type ?? '';
+    return {
+        kind: 'bts_residual',
+        sequence: 'same-page-post-exit',
+        engineMode: /\(gc\)$/i.test(type) ? 'gc' : /\(rc\)$/i.test(type) ? 'rc' : 'unknown',
+        vmId: analysis.vmId,
+        instanceId: analysis.instanceId,
+        slotId: analysis.slotId,
+        snapshots: analysis.snapshotIds.flatMap((id) => {
+            const snapshot = result.snapshots.find((item) => item.snapshotId === id);
+            return snapshot.integrity === 'complete' && !snapshot.identityError && snapshot.sha256
+                ? [{ snapshotId: id, sha256: snapshot.sha256, captureTsMs: snapshot.captureTsMs }]
+                : [];
+        }),
+    };
+}
+function captureGaps(result, analysis) {
+    const snapshots = analysis.snapshotIds.map((id) => result.snapshots.find((item) => item.snapshotId === id));
+    const complete = snapshots.filter((item) => item.integrity === 'complete' && !item.identityError);
+    return [
+        ...new Set([
+            ...snapshots.flatMap((item) => (item.identityError ? [item.identityError] : [])),
+            ...(snapshots.length === 0 ? ['没有该销毁页面的 residual 快照，无法分析对象残留。'] : []),
+            ...snapshots.flatMap((item) => (item.extractionError ? [`${item.snapshotId}: ${item.extractionError}`] : [])),
+            ...(snapshots.length && !analysis.tailComplete ? ['序列末端未完整覆盖，展示的是末次有效观察。'] : []),
+            ...(new Set(complete.map((item) => item.includeInternalAllocations)).size > 1
+                ? ['快照 include_internal_allocations 不一致，统计不可直接比较。']
+                : []),
+        ]),
+    ];
+}
+/** Extract every residual record, preserving failures and later observations. */
+async function prepareMemoryResidualAnalysis(traceQuery, result, directory) {
+    for (const analysis of result.residualAnalyses) {
+        analysis.findings = [];
+        analysis.translations = undefined;
+        analysis.reportHtml = undefined;
+        analysis.reportPath = undefined;
+        analysis.evidencePath = undefined;
+        analysis.leakBytes = undefined;
+        analysis.leakSizeBasis = undefined;
+        analysis.analyzerVersion = undefined;
+        analysis.rulesVersion = undefined;
+        analysis.knownNonLeakBytes = undefined;
+        for (const id of analysis.snapshotIds) {
+            const snapshot = result.snapshots.find((item) => item.snapshotId === id);
+            if (snapshot.integrity === 'metadata-only') {
+                snapshot.extractionError = undefined;
+                snapshot.outputPath = undefined;
+                snapshot.sha256 = undefined;
+                continue;
+            }
+            try {
+                const file = path.join(directory, `${snapshot.sliceId}.heapsnapshot`);
+                Object.assign(snapshot, await (0, query_memory_snapshot_1.extractMemorySnapshot)(traceQuery, id, file), {
+                    integrity: 'complete',
+                    extractionError: undefined,
+                });
+            }
+            catch (error) {
+                snapshot.integrity = 'incomplete';
+                snapshot.extractionError = String(error);
+            }
+        }
+        const snapshots = analysis.snapshotIds.map((id) => result.snapshots.find((item) => item.snapshotId === id));
+        const valid = snapshots.filter((item) => !item.identityError && (item.integrity === 'complete' || item.integrity === 'metadata-only'));
+        const latest = valid[valid.length - 1];
+        analysis.latestSnapshotId = latest?.snapshotId;
+        analysis.residualBytes = latest?.retainedBytes;
+        analysis.tailComplete = latest !== undefined && latest === snapshots[snapshots.length - 1];
+        analysis.gaps = captureGaps(result, analysis);
+        analysis.status =
+            analysis.tailComplete && latest?.retainedBytes === 0
+                ? 'cleared'
+                : analysis.gaps.length
+                    ? 'insufficient'
+                    : 'pending';
+        analysis.inputDigest = residualInputDigest(result, analysis);
+        analysis.analyzerContext = residualAnalyzerContext(result, analysis);
+        fs.mkdirSync(directory, { recursive: true });
+        analysis.contextPath = path.resolve(directory, `${analysis.reportAnchor}.context.json`);
+        fs.writeFileSync(analysis.contextPath, JSON.stringify(analysis.analyzerContext, null, 2));
+    }
+    refreshResidualSummary(result);
+}
+function object(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value))
+        throw new Error('Expected JSON object');
+    return value;
+}
+function text(value) {
+    if (typeof value !== 'string' || !value.trim())
+        throw new Error('Expected nonempty text');
+    return value;
+}
+function strings(value) {
+    if (!Array.isArray(value) || value.some((item) => typeof item !== 'string'))
+        throw new Error('Expected string array');
+    return value;
+}
+function readTranslations(texts, translations) {
+    const result = Object.create(null);
+    for (const source of new Set(texts)) {
+        if (!translations || !Object.prototype.hasOwnProperty.call(translations, source)) {
+            throw new Error(`Missing Chinese/English translation for residual text: ${source.slice(0, 80)}`);
+        }
+        const copy = object(translations[source]);
+        result[source] = { zh: text(copy['zh']), en: text(copy['en']) };
+    }
+    return result;
+}
+function resolveEvidenceRef(evidence, ref) {
+    if (/~(?![01])/u.test(ref) ||
+        !/^\/(snapshots|queries|comparisons|source_evidence|source_materials|analysis\/observations)\/\d+(?:\/|$)/.test(ref)) {
+        throw new Error(`Invalid evidence reference: ${ref}`);
+    }
+    let current = evidence;
+    for (const key of ref
+        .slice(1)
+        .split('/')
+        .map((part) => part.replace(/~1/g, '/').replace(/~0/g, '~'))) {
+        if (current === null || typeof current !== 'object' || !Object.prototype.hasOwnProperty.call(current, key)) {
+            throw new Error(`Unresolved evidence reference: ${ref}`);
+        }
+        current = current[key];
+    }
+    return current;
+}
+function validateRefs(evidence, refs) {
+    if (!refs.length)
+        throw new Error('A finding must have evidence references');
+    for (const ref of refs)
+        resolveEvidenceRef(evidence, ref);
+}
+/** Structured node evidence requires navigation or a visible explanation for its absence. */
+function containsMeasuredNode(value) {
+    const pending = [value];
+    while (pending.length) {
+        const item = pending.pop();
+        if (!item || typeof item !== 'object')
+            continue;
+        const node = item;
+        if (Number.isSafeInteger(node['ord']) &&
+            node['ord'] >= 0 &&
+            Number.isSafeInteger(node['id']) &&
+            node['id'] >= 0)
+            return true;
+        for (const child of Object.values(item))
+            if (child && typeof child === 'object')
+                pending.push(child);
+    }
+    return false;
+}
+function representativeObjects(evidence, finding, refs, context) {
+    const anchors = finding['representative_objects'];
+    const gap = finding['object_anchor_gap'];
+    if (gap !== undefined && text(gap).length > 2000)
+        throw new Error('Object anchor gap exceeds 2000 characters');
+    if ((anchors === undefined || (Array.isArray(anchors) && !anchors.length)) &&
+        gap === undefined &&
+        refs.some((ref) => /^\/(?:queries|snapshots)\//.test(ref) && containsMeasuredNode(resolveEvidenceRef(evidence, ref)))) {
+        throw new Error('Measured node evidence requires representative objects or an explicit object_anchor_gap');
+    }
+    if (anchors === undefined)
+        return undefined;
+    if (!Array.isArray(anchors) || anchors.length > 10)
+        throw new Error('Expected at most 10 representative objects');
+    const nodes = new Set();
+    const labels = new Set();
+    return anchors.map((raw) => {
+        const anchor = object(raw);
+        const label = text(anchor['label']);
+        const ref = text(anchor['evidence_ref']);
+        validateRefs(evidence, [ref]);
+        if (label.length > 80 ||
+            !/^\/(?:queries|snapshots)\/\d+\//.test(ref) ||
+            !refs.some((parent) => ref === parent || ref.startsWith(`${parent}/`))) {
+            throw new Error('Representative object must belong to its finding evidence');
+        }
+        let current = evidence;
+        let hash;
+        for (const token of ref.slice(1).split('/')) {
+            const row = current;
+            hash = row['snapshot_sha256'] ?? row['sha256'] ?? hash;
+            current = row[token.replace(/~1/g, '/').replace(/~0/g, '~')];
+        }
+        const node = object(current);
+        const nodeIndex = node['ord'];
+        const nodeId = node['id'];
+        const snapshots = context.snapshots.filter((item) => item.sha256 === hash);
+        const source = evidence['snapshots'].find((item) => item['sha256'] === hash);
+        if (snapshots.length !== 1 ||
+            !Number.isSafeInteger(nodeIndex) ||
+            nodeIndex < 0 ||
+            !Number.isSafeInteger(source?.['node_count']) ||
+            nodeIndex >= source['node_count'] ||
+            !Number.isSafeInteger(nodeId) ||
+            nodeId < 0) {
+            throw new Error('Representative object requires a measured node and unique snapshot identity');
+        }
+        const key = `${hash}:${nodeIndex}`;
+        if (nodes.has(key) || labels.has(label))
+            throw new Error('Duplicate representative object');
+        nodes.add(key);
+        labels.add(label);
+        return { label, snapshotId: snapshots[0].snapshotId, nodeIndex, nodeId };
+    });
+}
+/** Resolve hashes only within the referenced evidence, never from finding prose. */
+function findingSnapshotIds(evidence, refs, context) {
+    const hashes = new Set();
+    const collect = (value) => {
+        if (!value || typeof value !== 'object')
+            return;
+        if (Array.isArray(value)) {
+            value.forEach(collect);
+            return;
+        }
+        for (const [key, child] of Object.entries(value)) {
+            if ((key === 'sha256' || key === 'snapshot_sha256') && typeof child === 'string')
+                hashes.add(child);
+            else if (typeof child === 'object')
+                collect(child);
+        }
+    };
+    for (const ref of refs) {
+        const keys = ref
+            .slice(1)
+            .split('/')
+            .map((key) => key.replace(/~1/g, '/').replace(/~0/g, '~'));
+        let current = evidence;
+        for (const key of keys) {
+            if (!current || typeof current !== 'object')
+                break;
+            const row = current;
+            // A reference to a nested path inherits its sample/snapshot identity.
+            for (const field of ['sha256', 'snapshot_sha256']) {
+                if (typeof row[field] === 'string')
+                    hashes.add(row[field]);
+            }
+            current = row[key];
+        }
+        collect(current);
+    }
+    return context.snapshots.filter((snapshot) => hashes.has(snapshot.sha256)).map((snapshot) => snapshot.snapshotId);
+}
+/** Validates the whole import before replacing any previous page conclusions. */
+function applyMemoryResidualResults(result, input, baseDirectory = '.') {
+    if (result.schemaVersion !== 4 || input.schemaVersion !== 1 || !Array.isArray(input.pages)) {
+        throw new Error('Unsupported memory analysis or residual import schema');
+    }
+    const seen = new Set();
+    const updates = input.pages.map((entry) => {
+        const analysis = result.residualAnalyses.find((item) => item.id === entry.analysisId);
+        if (!analysis || seen.has(entry.analysisId))
+            throw new Error(`Unknown or duplicate analysis: ${entry.analysisId}`);
+        seen.add(entry.analysisId);
+        if (entry.inputDigest !== residualInputDigest(result, analysis))
+            throw new Error(`Stale residual result: ${entry.analysisId}`);
+        const evidence = object(JSON.parse(fs.readFileSync(path.resolve(baseDirectory, text(entry.evidencePath)), 'utf8')));
+        const finalAnalysis = object(evidence['analysis']);
+        const expectedContext = residualAnalyzerContext(result, analysis);
+        if (JSON.stringify(evidence['residual_context']) !== JSON.stringify(expectedContext)) {
+            throw new Error('Analyzer must receive the matching engine mode and complete same-page residual sequence');
+        }
+        if (finalAnalysis['status'] !== 'final')
+            throw new Error('Only finalized analyzer findings can be imported');
+        text(object(evidence['inquiry'])['question']);
+        text(finalAnalysis['scope']);
+        const gaps = strings(finalAnalysis['gaps']);
+        const snapshots = evidence['snapshots'];
+        const latest = result.snapshots.find((item) => item.snapshotId === analysis.latestSnapshotId);
+        if (!Array.isArray(snapshots) ||
+            snapshots.length !== expectedContext.snapshots.length ||
+            snapshots.some((item, index) => object(item)['sha256'] !== expectedContext.snapshots[index]?.sha256) ||
+            !latest?.sha256 ||
+            !snapshots.some((item) => object(item)['sha256'] === latest.sha256)) {
+            throw new Error('Analyzer evidence must include the latest valid residual snapshot hash');
+        }
+        const rawFindings = finalAnalysis['findings'];
+        if (!Array.isArray(rawFindings) ||
+            !Array.isArray(entry.decisions) ||
+            entry.decisions.length !== rawFindings.length) {
+            throw new Error('Every analyzer finding needs exactly one disposition');
+        }
+        const findingIds = new Set();
+        const findings = rawFindings.map((raw) => {
+            const finding = object(raw);
+            const id = text(finding['id']);
+            if (findingIds.has(id))
+                throw new Error(`Duplicate finding: ${id}`);
+            findingIds.add(id);
+            const decisions = entry.decisions.filter((item) => item.findingId === id);
+            const decision = decisions[0];
+            if (decisions.length !== 1 ||
+                !decision ||
+                !['confirmed', 'suspected', 'retained', 'excluded', 'information', 'known-non-leak'].includes(decision.disposition) ||
+                !['high', 'medium', 'low'].includes(decision.confidence))
+                throw new Error(`Invalid finding disposition: ${id}`);
+            const refs = strings(finding['evidence_refs']);
+            validateRefs(evidence, refs);
+            if (decision.disposition === 'excluded' || decision.disposition === 'known-non-leak') {
+                if (!decision.exclusion)
+                    throw new Error('Excluded findings require a versioned rule and evidence');
+                text(decision.exclusion.ruleId);
+                text(decision.exclusion.version);
+                text(decision.exclusion.reason);
+                validateRefs(evidence, decision.exclusion.evidenceRefs);
+            }
+            if (decision.disposition === 'known-non-leak') {
+                const exclusion = decision.exclusion;
+                const last = object(snapshots.at(-1));
+                const residual = object(last['residual']);
+                const rules = Array.isArray(residual['rules']) ? residual['rules'] : [];
+                const rule = rules.find((row) => object(row)['rule_id'] === exclusion.ruleId);
+                if (!rule ||
+                    object(rule)['version'] !== exclusion.version ||
+                    entry.rulesVersion !== exclusion.version ||
+                    !Number.isSafeInteger(exclusion.bytes) ||
+                    exclusion.bytes < 0 ||
+                    object(rule)['bytes'] !== exclusion.bytes ||
+                    (exclusion.ruleId === 'gc-atom-string' && expectedContext.engineMode !== 'gc') ||
+                    !['debugger', 'object-shape', 'builtin-function', 'gc-atom-string', 'vm-current-app-id'].includes(exclusion.ruleId)) {
+                    throw new Error('Known non-leak finding must match the latest analyzer rule evidence and engine mode');
+                }
+                const ruleRef = `/snapshots/${snapshots.length - 1}/residual/rules/${rules.indexOf(rule)}`;
+                if (!refs.includes(ruleRef) || !exclusion.evidenceRefs.includes(ruleRef)) {
+                    throw new Error('Known non-leak finding must reference its latest rule evidence');
+                }
+            }
+            return {
+                id,
+                title: text(finding['title']),
+                conclusion: text(finding['conclusion']),
+                evidence_refs: refs,
+                snapshotIds: findingSnapshotIds(evidence, refs, expectedContext),
+                representativeObjects: representativeObjects(evidence, finding, refs, expectedContext),
+                allocationBreakdown: (0, memory_cache_retention_1.importCacheBreakdown)(evidence, finding, refs, expectedContext),
+                limitations: [
+                    ...new Set([
+                        ...strings(finding['limitations']),
+                        ...(finding['object_anchor_gap'] === undefined ? [] : [text(finding['object_anchor_gap'])]),
+                    ]),
+                ],
+                disposition: decision.disposition,
+                confidence: decision.confidence,
+                exclusion: decision.exclusion,
+            };
+        });
+        const reportPath = path.resolve(baseDirectory, text(entry.reportPath));
+        const allocated = new Set();
+        for (const finding of findings) {
+            for (const id of finding.allocationBreakdown?.nodeIds ?? []) {
+                const key = `${finding.allocationBreakdown.snapshotId}:${id}`;
+                if (allocated.has(key))
+                    throw new Error('Overlapping finding allocation breakdowns');
+                allocated.add(key);
+            }
+        }
+        const reportHtml = fs.readFileSync(reportPath, 'utf8');
+        if (!/<html[\s>]/i.test(reportHtml))
+            throw new Error('Expected an analyzer HTML report');
+        const confirmed = findings.some((item) => item.disposition === 'confirmed');
+        const knownFindings = findings.filter((item) => item.disposition === 'known-non-leak');
+        if (new Set(knownFindings.map((item) => item.exclusion.ruleId)).size !== knownFindings.length)
+            throw new Error('Duplicate known non-leak rule');
+        const knownNonLeakBytes = knownFindings.reduce((sum, item) => sum + item.exclusion.bytes, 0);
+        if (knownNonLeakBytes > (analysis.residualBytes ?? 0))
+            throw new Error('Known non-leak size exceeds slot residual');
+        if (confirmed &&
+            (!analysis.tailComplete ||
+                analysis.residualBytes === 0 ||
+                analysis.snapshotIds.some((id) => result.snapshots.find((item) => item.snapshotId === id)?.identityError))) {
+            throw new Error('Cannot confirm a current page leak with ambiguous identity, an incomplete tail, or a cleared slot');
+        }
+        if (entry.leakBytes !== undefined &&
+            (!confirmed || !Number.isFinite(entry.leakBytes) || entry.leakBytes < 0 || !entry.leakSizeBasis)) {
+            throw new Error('Quantified leak size requires confirmed findings and a non-overlapping size basis');
+        }
+        const status = analysis.status === 'cleared'
+            ? 'cleared'
+            : confirmed
+                ? 'confirmed'
+                : findings.some((item) => item.disposition === 'suspected')
+                    ? 'suspected'
+                    : findings.some((item) => item.disposition === 'retained')
+                        ? 'retained'
+                        : knownFindings.length &&
+                            knownNonLeakBytes === analysis.residualBytes &&
+                            analysis.tailComplete &&
+                            !gaps.length &&
+                            !captureGaps(result, analysis).length
+                            ? 'known-non-leak'
+                            : findings.some((item) => item.disposition === 'excluded')
+                                ? 'excluded'
+                                : 'insufficient';
+        const translations = readTranslations([
+            ...findings.flatMap((finding) => [
+                finding.title,
+                finding.conclusion,
+                ...finding.limitations,
+                ...(finding.exclusion ? [finding.exclusion.reason] : []),
+            ]),
+            ...gaps,
+            ...(entry.leakSizeBasis ? [entry.leakSizeBasis] : []),
+        ], input.translations);
+        return {
+            analysis,
+            values: {
+                findings,
+                translations,
+                status,
+                gaps: [...new Set([...captureGaps(result, analysis), ...gaps])],
+                analyzerVersion: text(entry.analyzerVersion),
+                rulesVersion: text(entry.rulesVersion),
+                knownNonLeakBytes,
+                reportPath,
+                evidencePath: path.resolve(baseDirectory, entry.evidencePath),
+                reportHtml,
+                leakBytes: entry.leakBytes,
+                leakSizeBasis: entry.leakSizeBasis,
+            },
+        };
+    });
+    const failures = (input.failures ?? []).map((failure) => {
+        const analysis = result.residualAnalyses.find((item) => item.id === failure.analysisId);
+        if (!analysis || seen.has(failure.analysisId) || failure.inputDigest !== residualInputDigest(result, analysis)) {
+            throw new Error(`Unknown, duplicate or stale failed analysis: ${failure.analysisId}`);
+        }
+        seen.add(failure.analysisId);
+        const error = text(failure.error);
+        return { analysis, error, translations: readTranslations([error], input.translations) };
+    });
+    for (const update of updates)
+        Object.assign(update.analysis, update.values);
+    for (const failure of failures)
+        Object.assign(failure.analysis, {
+            status: 'failed',
+            findings: [],
+            translations: failure.translations,
+            reportHtml: undefined,
+            reportPath: undefined,
+            evidencePath: undefined,
+            leakBytes: undefined,
+            leakSizeBasis: undefined,
+            analyzerVersion: undefined,
+            rulesVersion: undefined,
+            knownNonLeakBytes: undefined,
+            gaps: [...captureGaps(result, failure.analysis), failure.error],
+        });
+    refreshResidualSummary(result);
+}
+function refreshResidualSummary(result) {
+    result.issues = result.issues.filter((issue) => issue.code !== 'bts_residual_confirmed');
+    for (const chart of result.sharedBtsSlotCharts) {
+        chart.events = (chart.events ?? []).filter((event) => event.name !== 'bts_residual_confirmed');
+    }
+    for (const analysis of result.residualAnalyses.filter((item) => item.status === 'confirmed')) {
+        const snapshot = result.snapshots.find((item) => item.snapshotId === analysis.latestSnapshotId);
+        const findings = analysis.findings.filter((item) => item.disposition === 'confirmed');
+        for (const finding of findings)
+            result.issues.push({
+                code: 'bts_residual_confirmed',
+                title: finding.title,
+                message: finding.conclusion,
+                titleText: analysis.translations?.[finding.title],
+                messageText: analysis.translations?.[finding.conclusion],
+                confidence: finding.confidence,
+                instanceIds: [analysis.instanceId],
+                vmId: analysis.vmId,
+                slotId: analysis.slotId,
+                snapshotIds: finding.snapshotIds,
+            });
+        const chartId = result.sharedBtsVmAnalyses.find((item) => item.vmId === analysis.vmId)?.chartId;
+        result.sharedBtsSlotCharts
+            .find((item) => item.id === chartId)
+            ?.events?.push({
+            name: 'bts_residual_confirmed',
+            tsMs: snapshot.captureTsMs,
+            instanceId: analysis.instanceId,
+            snapshotId: snapshot.snapshotId,
+            slotId: analysis.slotId,
+            residualBytes: analysis.residualBytes,
+            leakBytes: analysis.leakBytes,
+            leakSizeBasis: analysis.leakSizeBasis,
+            leakSizeBasisText: analysis.leakSizeBasis ? analysis.translations?.[analysis.leakSizeBasis] : undefined,
+            confidence: findings[0].confidence,
+            reportAnchor: analysis.reportAnchor,
+        });
+    }
+    const summary = result.summary;
+    summary.issueCount = result.issues.length;
+    summary.confirmedLeakPageCount = result.residualAnalyses.filter((item) => item.status === 'confirmed').length;
+    summary.suspectedPageCount = result.residualAnalyses.filter((item) => ['retained', 'suspected'].includes(item.status)).length;
+    summary.incompletePageCount = result.residualAnalyses.filter((item) => ['pending', 'failed', 'insufficient'].includes(item.status)).length;
+    if (result.valid)
+        summary.conclusion = `发现 ${summary.issueCount} 个内存 issue；泄漏 ${summary.confirmedLeakPageCount} 页，待核实 ${summary.suspectedPageCount} 页，分析未完成或证据不足 ${summary.incompletePageCount} 页。`;
+}
+//# sourceMappingURL=memory_residual_analysis.js.map
+
+/***/ },
+
+/***/ 552
+(__unused_webpack_module, exports) {
+
+
+// Copyright 2026 The Lynx Authors. All rights reserved.
+// Licensed under the Apache License Version 2.0.
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.checkSourcePreparation = checkSourcePreparation;
+exports.discardOptedOutSources = discardOptedOutSources;
+const kinds = ['frontend', 'lynx'];
+const nonempty = (value) => typeof value === 'string' && value.trim().length > 0;
+function checkSourcePreparation(value, phase, manifests, result) {
+    const fail = (message) => {
+        throw new Error(`Source preparation blocked: ${message}`);
+    };
+    if (!value || value.version !== 1) {
+        fail('provide --source-preparation <json> with frontend and lynx decisions; missing input is not an opt-out.');
+    }
+    const ledger = value;
+    for (const kind of kinds) {
+        const decision = ledger[kind];
+        const manifest = manifests[kind];
+        const previous = result?.sourcePreparation?.[kind];
+        const savedProjects = result?.frontendSources?.projects?.filter((project) => Boolean(project.lynx) === (kind === 'lynx'));
+        if (!decision || !['prepared', 'not-provided', 'opted-out', 'pending', 'aborted'].includes(decision.state)) {
+            fail(`${kind}: missing or invalid decision.`);
+        }
+        if (decision.state === 'pending' || decision.state === 'aborted') {
+            fail(`${kind}: ${decision.state}; resolve the source failure with the user before continuing.`);
+        }
+        if (decision.state === 'not-provided') {
+            if (kind === 'lynx' || manifest || savedProjects?.length || (previous && previous.state !== 'not-provided')) {
+                fail(`${kind}: not-provided cannot replace runtime preparation or a supplied source.`);
+            }
+            continue;
+        }
+        if (decision.state === 'opted-out') {
+            if (!nonempty(decision.userStatement) || !nonempty(decision.reason)) {
+                fail(`${kind}: an opt-out requires the user's actual statement and the affected scope/reason.`);
+            }
+            if (manifest)
+                fail(`${kind}: do not pass a manifest for an opted-out source group.`);
+            continue;
+        }
+        if (!nonempty(decision.manifestDigest))
+            fail(`${kind}: prepared requires manifestDigest.`);
+        if (phase === 'report' && (manifests.frontend || manifests.lynx) && !manifest) {
+            fail(`${kind}: pass every prepared group's manifest when refreshing sources, or omit all manifests for offline reuse.`);
+        }
+        if (manifest) {
+            if (manifest.digest !== decision.manifestDigest)
+                fail(`${kind}: manifest digest changed; prepare/recheck it.`);
+            if (!manifest.artifacts.length)
+                fail(`${kind}: prepared requires active artifacts; record an opt-out instead.`);
+        }
+        else if (phase === 'analysis' ||
+            previous?.state !== 'prepared' ||
+            previous.manifestDigest !== decision.manifestDigest ||
+            !savedProjects?.length) {
+            fail(`${kind}: prepared requires its verified manifest (or the same saved report inventory for offline rerender).`);
+        }
+        if (decision.binding && ['pending', 'mismatch'].includes(decision.binding.state)) {
+            fail(`${kind}: known binding failure requires the caller's failure interaction before continuing.`);
+        }
+        if (phase === 'report') {
+            const binding = decision.binding;
+            if (!binding || !['verified', 'limited'].includes(binding.state) || !nonempty(binding.reason)) {
+                fail(`${kind}: snapshot binding review is pending or mismatched; complete the caller's failure interaction.`);
+            }
+            if (binding.state === 'limited' &&
+                !['no-locations', 'insufficient-evidence', 'unused-artifacts', 'no-snapshots', 'no-map'].includes(binding.limitation || '')) {
+                fail(`${kind}: limited requires an evidence-gap category; conflicts/acquisition failures are not evidence gaps.`);
+            }
+            const expected = [
+                ...new Set([
+                    ...(result?.snapshots.flatMap((snapshot) => (snapshot.sha256 ? [snapshot.sha256] : [])) || []),
+                    ...Object.values(result?.frontendSources?.snapshots || {}).flatMap((snapshot) => snapshot.sha256 ? [snapshot.sha256] : []),
+                ]),
+            ].sort();
+            if (!Array.isArray(binding.snapshotSha256s) ||
+                binding.snapshotSha256s.some((hash) => !nonempty(hash)) ||
+                JSON.stringify([...new Set(binding.snapshotSha256s)].sort()) !== JSON.stringify(expected)) {
+                fail(`${kind}: binding review must cover the current exported snapshot hashes.`);
+            }
+        }
+    }
+    return structuredClone(ledger);
+}
+/** Remove cached attribution when the user withdraws a whole source group. */
+function discardOptedOutSources(result, ledger) {
+    for (const kind of kinds) {
+        if (ledger[kind].state !== 'opted-out')
+            continue;
+        const warning = `${kind} source assistance opted out by the user: ${ledger[kind].reason}`;
+        if (!result.warnings.includes(warning))
+            result.warnings.push(warning);
+    }
+    const inventory = result.frontendSources;
+    if (!inventory)
+        return;
+    const removed = new Set(inventory.projects
+        ?.filter((project) => ledger[project.lynx ? 'lynx' : 'frontend'].state === 'opted-out')
+        .map((project) => project.id) || []);
+    if (!removed.size)
+        return;
+    const removedScripts = new Set(inventory.artifacts?.filter((artifact) => removed.has(artifact.projectId)).map((artifact) => artifact.script));
+    inventory.projects = inventory.projects?.filter((project) => !removed.has(project.id));
+    inventory.artifacts = inventory.artifacts?.filter((artifact) => !removed.has(artifact.projectId));
+    for (const { locations } of Object.values(inventory.snapshots)) {
+        for (const [key, location] of Object.entries(locations.nodes)) {
+            if (!location.projectId || removed.has(location.projectId))
+                delete locations.nodes[key];
+        }
+        const bindings = locations.bindings || {};
+        for (const [key, binding] of Object.entries(bindings)) {
+            binding.candidates = binding.candidates.filter((candidate) => !removed.has(candidate.projectId));
+            if (binding.selected && removed.has(binding.selected.projectId))
+                delete binding.selected;
+            if (!binding.candidates.length)
+                delete bindings[key];
+        }
+        const runtimeMatches = locations.runtimeMatches || {};
+        for (const [key, match] of Object.entries(runtimeMatches)) {
+            match.candidates = match.candidates.filter((candidate) => !removedScripts.has(candidate.script));
+            if (match.selected && removedScripts.has(match.selected))
+                delete match.selected;
+            if (!match.candidates.length)
+                delete runtimeMatches[key];
+        }
+    }
+}
+//# sourceMappingURL=source_preparation.js.map
 
 /***/ },
 
@@ -32463,6 +36020,7 @@ class TraceQuery {
                 traceFile = await this.downloadTraceFile(tracePath);
             }
             this.traceProcessor = await trace_processor_1.default.create(traceFile, undefined, config);
+            this.sourceTracePath = path.resolve(traceFile);
         }
         catch (error) {
             console.error('Error initializing TraceProcessor:', error);
@@ -32987,6 +36545,13 @@ module.exports = require("path");
 (module) {
 
 module.exports = require("process");
+
+/***/ },
+
+/***/ 7016
+(module) {
+
+module.exports = require("url");
 
 /***/ },
 

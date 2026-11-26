@@ -2,6 +2,7 @@
 // Licensed under the Apache License Version 2.0 that can be found in the
 // LICENSE file in the root directory of this source tree.
 
+import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
@@ -24,8 +25,28 @@ import { queryPipelineIds } from '../queries/query_pipeline_ids';
 import { queryPipelineOverviewEvents } from '../queries/query_pipeline_overview_events';
 import { queryThreads } from '../queries/query_threads';
 import { queryTraceMetadata } from '../queries/query_trace_metadata';
-import { generateMemoryAnalysisReport } from '../reports/memory_analysis_report';
+import {
+  confirmFrontend,
+  PreparedFrontend,
+  prepareFrontend,
+  readFrontend,
+  readLynxSources,
+} from '../reports/frontend_sources';
+import {
+  LYNX_SOURCE_REPOSITORIES,
+  MINIMUM_TRACE_LYNX_VERSION,
+  queryLynxEngineVersions,
+  requestedLynxSource,
+} from '../reports/lynx_source_selection';
+import {
+  generateMemoryAnalysisArtifacts,
+  memoryReportPaths,
+  writeMemoryAnalysisData,
+} from '../reports/memory_analysis_artifacts';
+import { applyMemoryResidualResults, prepareMemoryResidualAnalysis } from '../reports/memory_residual_analysis';
+import { checkSourcePreparation, discardOptedOutSources, SourcePreparation } from '../reports/source_preparation';
 import { CommandHooks } from '../types/hook';
+import { MemoryAnalysisResult } from '../types/memory_analysis';
 import { getTreeStyleTraceEvents } from '../utils/convert_trace_event_style';
 import { TraceQuery } from '../utils/trace_query';
 
@@ -45,6 +66,10 @@ interface CommandOptions {
   scenario?: string;
   output?: string;
   snapshotId?: string;
+  outputData?: string;
+  residualDir?: string;
+  data?: string;
+  residualResults?: string;
 }
 
 function tryRequireHooks(): CommandHooks | null {
@@ -135,6 +160,107 @@ async function main() {
   const program = new Command();
 
   program.version('0.0.1').description('Trace Query CLI Tool');
+  program.option(
+    '--frontend-manifest <path>',
+    'Prepared frontend artifact manifest; required when frontend projects were supplied',
+  );
+  program.option('--lynx-manifest <path>', 'Prepared Lynx runtime build manifest with verified revision provenance');
+  program.option('--source-preparation <path>', 'Source preparation and explicit user-decision ledger (version 1)');
+  let frontend: PreparedFrontend | undefined;
+  let lynx: PreparedFrontend | undefined;
+  let sourcePreparation: SourcePreparation | undefined;
+  program.hook('preAction', (_command, action) => {
+    const manifest = program.opts()['frontendManifest'] as string | undefined;
+    if (manifest && !action.name().startsWith('frontend-') && action.name() !== 'lynx-source-version') {
+      // This runs before hooks, Trace downloads or processor initialization.
+      frontend = readFrontend(manifest);
+    }
+    const runtime = program.opts()['lynxManifest'] as string | undefined;
+    if (runtime && !action.name().startsWith('frontend-') && action.name() !== 'lynx-source-version') {
+      lynx = readLynxSources(runtime);
+    }
+    if (['memory-analysis', 'memory-snapshot', 'memory-report'].includes(action.name())) {
+      const ledger = program.opts()['sourcePreparation'] as string | undefined;
+      if (ledger) sourcePreparation = JSON.parse(fs.readFileSync(ledger, 'utf8'));
+      if (action.name() !== 'memory-report') {
+        // Fail before hooks, downloads, Trace queries, extraction or report side effects.
+        sourcePreparation = checkSourcePreparation(sourcePreparation, 'analysis', { frontend, lynx });
+      }
+    }
+  });
+
+  program
+    .command('lynx-source-version')
+    .description('Select an explicit Lynx revision or inspect recorded versions before memory analysis')
+    .option('-p, --path <path>', 'Trace path, used only when no explicit Lynx revision is supplied')
+    .option('--lynx-version <version>', 'User-selected Lynx version; A_<version> is an internal tag hint to verify')
+    .option('--lynx-version-ref <ref>', 'Verified version tag/ref in the selected internal or OSS repository')
+    .option('--lynx-commit <commit>', 'User-selected Lynx commit')
+    .option('--lynx-branch <branch>', 'User-selected Lynx branch')
+    .option('-o, --output <path>', 'Optional version-selection JSON')
+    .action(
+      async (options: {
+        path?: string;
+        lynxVersion?: string;
+        lynxVersionRef?: string;
+        lynxCommit?: string;
+        lynxBranch?: string;
+        output?: string;
+      }) => {
+        const selection = requestedLynxSource(options);
+        const candidates = selection
+          ? undefined
+          : await withTraceQuery(requireOption(options.path, 'path'), queryLynxEngineVersions);
+        const result = {
+          repositories: LYNX_SOURCE_REPOSITORIES,
+          repositorySelection:
+            'Preserve an explicit URL/local path. Otherwise query Git remotes without asking the user: probe internal with git ls-remote <url> HEAD; accessible internal always selects internal. Only if internal is inaccessible, probe OSS. Record probe results and verify the requested revision in the selected repository; a missing internal ref never permits OSS fallback. This command does not run Git probes.',
+          versionRefGuidance:
+            'For an explicit user version or an eligible Trace candidate, form A_<version> and query the exact tag plus its peeled ref in the selected remote. Trace versions below 4.5.0 are invalid even if their tags exist: treat them as missing tags and request source/revision input. Verify any different OSS version-to-tag mapping from remote evidence. ls-remote does not enumerate every commit: verify a supplied commit with a depth-one fetch into a new empty checkout and rev-parse FETCH_HEAD^{commit}. Record the full commit and logs; do not inspect local repositories or caches.',
+          ...(selection
+            ? { source: 'user', selection, requiresConsent: false }
+            : {
+                source: 'trace',
+                minimumTraceVersion: MINIMUM_TRACE_LYNX_VERSION,
+                candidates,
+                requiresConsent: false,
+                nextStep: candidates?.some((candidate) => candidate.status === 'candidate')
+                  ? 'Only status=candidate versions may proceed to remote tag verification and automatic builds. Resolve versions for the requested process/page scope; never substitute a valid version for another scope with invalid metadata. Invalid versions follow missing-tag recovery even if their tags exist. Ask for source/revision when no unique usable tag can be resolved; validate JS/maps against snapshots later.'
+                  : 'No eligible Trace version. Treat invalid or below-minimum versions as missing tags even if the remote tags exist; memory analysis support starts at Lynx 4.5.0. Ask for Lynx source/revision input and keep preparation pending until usable input or an explicit opt-out/abort is received.',
+              }),
+        };
+        if (options.output) {
+          fs.mkdirSync(path.dirname(path.resolve(options.output)), { recursive: true });
+          fs.writeFileSync(options.output, JSON.stringify(result, null, 2));
+        }
+        console.log(JSON.stringify(result, null, 2));
+      },
+    );
+
+  program
+    .command('frontend-prepare')
+    .description('Validate frontend or runtime outputs and write a manifest ready for analysis')
+    .requiredOption('--config <path>', 'Frontend projects JSON (version 1)')
+    .requiredOption('-o, --output <path>', 'Prepared manifest JSON')
+    .action((options: { config: string; output: string }) => {
+      const manifest = prepareFrontend(
+        JSON.parse(fs.readFileSync(options.config, 'utf8')),
+        path.dirname(path.resolve(options.config)),
+      );
+      fs.mkdirSync(path.dirname(path.resolve(options.output)), { recursive: true });
+      fs.writeFileSync(options.output, JSON.stringify(manifest, null, 2));
+      console.log(JSON.stringify(manifest, null, 2));
+    });
+
+  program
+    .command('frontend-confirm')
+    .description('Optionally record an explicit artifact approval for compatibility; not required for analysis')
+    .requiredOption('--manifest <path>', 'Prepared manifest JSON')
+    .requiredOption('--digest <sha256>', 'Digest of the artifact list shown to the user')
+    .requiredOption('--statement <text>', 'The user statement approving the artifact paths')
+    .action((options: { manifest: string; digest: string; statement: string }) => {
+      console.log(JSON.stringify(confirmFrontend(options.manifest, options.digest, options.statement), null, 2));
+    });
 
   program
     .command('id')
@@ -389,14 +515,16 @@ async function main() {
 
   program
     .command('memory-analysis')
-    .description('Analyze Lynx memory data and generate a self-contained HTML report')
+    .description('Analyze Lynx memory and generate a portable report directory with the source Trace')
     .option('-p, --path <path>', 'Trace file path (can be URL or local file)')
     .option('--url <url>', 'Only select pages whose URL contains this value')
     .option('--instance-id <id>', 'Only select this Lynx page instance ID')
     .option('--scenario <scenario>', 'Analysis scenario: default or scroll', 'default')
     .option('-s, --start <start>', 'Scroll scenario start timestamp in ms')
     .option('-e, --end <end>', 'Scroll scenario end timestamp in ms')
-    .option('-o, --output <output>', 'HTML report output path', 'memory-analysis-report.html')
+    .option('-o, --output <output>', 'Report directory (or explicit HTML entry path)', 'memory-analysis-report')
+    .option('--output-data <path>', 'Additional copy of the full analysis JSON')
+    .option('--residual-dir <path>', 'Directory for all residual snapshots')
     .action(
       wrapCommandAction('memory-analysis', async (options: CommandOptions, tq: TraceQuery) => {
         requireOption(options.path, 'path');
@@ -408,10 +536,19 @@ async function main() {
           startTsMs: parseNumber(options.start),
           endTsMs: parseNumber(options.end),
         });
-        const reportPath = generateMemoryAnalysisReport(
-          result,
-          path.resolve(options.output || 'memory-analysis-report.html'),
-        );
+        result.sourcePreparation = sourcePreparation;
+        const output = path.resolve(options.output || 'memory-analysis-report');
+        const directory = memoryReportPaths(output).directory;
+        await prepareMemoryResidualAnalysis(tq, result, options.residualDir || path.join(directory, 'snapshots'));
+        const { reportPath, dataPath } = await generateMemoryAnalysisArtifacts(result, output, {
+          tracePath: tq.sourceTracePath,
+          traceQuery: tq,
+          frontend,
+          lynx,
+        });
+        if (options.outputData) {
+          writeMemoryAnalysisData(result, options.outputData, directory);
+        }
         console.log(
           'Memory analysis:',
           JSON.stringify(
@@ -419,6 +556,8 @@ async function main() {
               valid: result.valid,
               error: result.error,
               reportPath,
+              directory,
+              dataPath,
               summary: result.summary,
               warnings: result.warnings,
               issues: result.issues,
@@ -430,13 +569,18 @@ async function main() {
                 mtsVmType: page.mtsVmType,
                 btsVmType: page.btsVmType,
                 btsVmName: page.btsVmName,
+                btsSlot: page.btsSlot,
                 sharedBts: page.sharedBts,
+                mtsPool: page.analysis.mtsPool,
+                residualAnalysisId: page.analysis.residualAnalysisId,
               })),
+              mtsPoolGrowthEvents: result.mtsPoolGrowthEvents,
+              residualAnalyses: result.residualAnalyses,
               snapshots: result.snapshots.map((snapshot) => ({
                 vmId: snapshot.vmId,
                 index: snapshot.index,
                 snapshotId: snapshot.snapshotId,
-                willTsMs: snapshot.willTsMs,
+                captureTsMs: snapshot.captureTsMs,
               })),
               sharedBtsVmAnalyses: result.sharedBtsVmAnalyses.map((analysis) => ({
                 vmId: analysis.vmId,
@@ -447,7 +591,6 @@ async function main() {
                 notDestroyedIssue: analysis.notDestroyedIssue,
                 gcAccumulateTrend: analysis.gcAccumulateTrend,
               })),
-              analysableLeakEvents: result.analysableLeakEvents,
             },
             null,
             2,
@@ -455,6 +598,59 @@ async function main() {
         );
       }),
     );
+
+  program
+    .command('memory-report')
+    .description('Import finalized residual findings and rerender a memory report offline')
+    .requiredOption('--data <path>', 'Full memory-analysis JSON')
+    .option('--residual-results <path>', 'Versioned per-page analyzer result manifest')
+    .requiredOption('-o, --output <path>', 'Report directory (or explicit HTML entry path)')
+    .option('-p, --path <path>', 'Source Trace for legacy analysis JSON without a bundled Trace')
+    .option('--output-data <path>', 'Updated full JSON output')
+    .action(async (options: CommandOptions) => {
+      const result = JSON.parse(fs.readFileSync(requireOption(options.data, 'data'), 'utf8')) as MemoryAnalysisResult;
+      if (result.schemaVersion !== 4) throw new Error('Expected memory analysis schemaVersion 4');
+      sourcePreparation = checkSourcePreparation(
+        sourcePreparation || result.sourcePreparation,
+        'report',
+        { frontend, lynx },
+        result,
+      );
+      discardOptedOutSources(result, sourcePreparation);
+      result.sourcePreparation = sourcePreparation;
+      if (!result.artifacts && options.path) {
+        await withTraceQuery(options.path, async (tq) => {
+          const [bounds] = await tq.query('SELECT start_ts, end_ts FROM trace_bounds');
+          if (
+            !bounds ||
+            Math.abs(Number(bounds['start_ts']) / 1e6 - result.trace.startTsMs) > 0.0001 ||
+            Math.abs(Number(bounds['end_ts']) / 1e6 - result.trace.endTsMs) > 0.0001
+          ) {
+            throw new Error('Source Trace bounds do not match the legacy analysis.');
+          }
+          options.path = tq.sourceTracePath;
+        });
+      }
+      if (options.residualResults) {
+        const file = path.resolve(options.residualResults);
+        applyMemoryResidualResults(result, JSON.parse(fs.readFileSync(file, 'utf8')), path.dirname(file));
+      }
+      const { reportPath, dataPath, directory } = await generateMemoryAnalysisArtifacts(
+        result,
+        requireOption(options.output, 'output'),
+        {
+          tracePath: options.path,
+          baseDirectory: path.dirname(path.resolve(options.data!)),
+          residualResultsPath: options.residualResults,
+          frontend,
+          lynx,
+        },
+      );
+      if (options.outputData) {
+        writeMemoryAnalysisData(result, options.outputData, directory);
+      }
+      console.log(JSON.stringify({ directory, reportPath, dataPath, summary: result.summary }, null, 2));
+    });
 
   program
     .command('memory-snapshot')
@@ -473,7 +669,7 @@ async function main() {
       }),
     );
 
-  program.parse(process.argv);
+  await program.parseAsync(process.argv);
 }
 
 main().catch((error) => {

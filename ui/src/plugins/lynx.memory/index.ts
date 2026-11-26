@@ -23,10 +23,21 @@ import {TrackNode} from '../../public/workspace';
 import {isLynxBackgroundScriptThreadGroup} from '../../lynx_perf/track_utils';
 import {ThreadSortOrder} from '../../lynx_perf/thread_order';
 import {MEMORY_VITAL_EVENT_NAMES, MemoryVitalsTrack} from './tracks';
+import {
+  openSnapshotViewer,
+  VIEW_SNAPSHOTS_COMMAND,
+} from './snapshot_viewer_state';
 
 export default class LynxMemoryPlugin implements PerfettoPlugin {
   static readonly id = LYNX_MEMORY_PLUGIN_ID;
   async onTraceLoad(ctx: Trace): Promise<void> {
+    ctx.trash.use(
+      ctx.commands.registerCommand({
+        id: VIEW_SNAPSHOTS_COMMAND,
+        name: 'View Snapshots',
+        callback: () => openSnapshotViewer(ctx),
+      }),
+    );
     const memoryVitalEventNames = MEMORY_VITAL_EVENT_NAMES.map(
       (name) => `'${name}'`,
     ).join(',');

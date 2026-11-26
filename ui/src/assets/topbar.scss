@@ -46,12 +46,12 @@
     font-family: var(--pf-font-compact);
   }
 
-  .lynx-assistant,
-  .lynx-menu,
-  .lynx-overflow-menu {
+  &__lynx-actions {
     position: absolute;
+    right: 20px;
     display: flex;
     align-items: center;
+    gap: 8px;
   }
 
   &--screen-large {
@@ -59,14 +59,6 @@
       width: calc(100% - 400px);
       max-width: 600px;
       min-width: 300px;
-    }
-
-    .lynx-assistant {
-      right: 150px;
-    }
-
-    .lynx-menu {
-      right: 20px;
     }
   }
 
@@ -76,14 +68,6 @@
       max-width: 600px;
       min-width: 300px;
     }
-
-    .lynx-assistant {
-      right: 60px;
-    }
-
-    .lynx-menu {
-      right: 20px;
-    }
   }
 
   &--screen-small {
@@ -91,10 +75,6 @@
       width: calc(100% - 80px);
       max-width: 100px;
       min-width: 0;
-    }
-
-    .lynx-overflow-menu {
-      right: 20px;
     }
 
     .lynx-assistant,

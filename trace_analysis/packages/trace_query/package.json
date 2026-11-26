@@ -26,15 +26,23 @@
     "README.md"
   ],
   "scripts": {
-    "build": "node ./scripts/compile_proto.mjs && tsc",
+    "build": "node ./scripts/compile_proto.mjs && tsc && npm run build:report-viewer",
+    "build:report-viewer": "node ./scripts/build_report_viewer.mjs",
     "clean": "rm -rf dist",
     "prepublishOnly": "npm run build",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:memory": "node scripts/test_memory_residual.cjs",
+    "test:frontend": "node scripts/test_frontend_sources.cjs",
+    "test:lynx-sources": "node scripts/test_lynx_sources.cjs",
+    "test:source-preparation": "node scripts/test_source_preparation.cjs",
+    "test:source-report": "node scripts/test_report_source_inventory.cjs"
   },
   "dependencies": {
+    "acorn": "^8.15.0",
     "commander": "^11.0.0",
     "node-fetch": "^3.3.2",
     "protobufjs": "^8.7.2",
+    "source-map-js": "^1.2.3",
     "uuid": "^9.0.0"
   },
   "devDependencies": {

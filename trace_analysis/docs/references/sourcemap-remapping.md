@@ -5,6 +5,17 @@ description: A guide for remapping line and column numbers from Lynx trace event
 
 # Sourcemap Remapping Guide
 
+If the user supplies frontend projects, complete multi-project source/artifact preparation and automatic
+artifact validation in [frontend-sources](./frontend-sources.md), then continue Trace queries without
+user confirmation. Independently supplied prebuilt artifacts skip the frontend build by default:
+match the Trace to their generated JS, then use its map to resolve original files in the specified
+source project. On a real mismatch, inspect config variables/branches and report likely causes with
+evidence, then offer abort, continue without affected artifacts, or provide an explicit artifact locator.
+Recheck each replacement and repeat until matched or the user explicitly aborts/opts out.
+That guide also covers snapshot Function positions, whose `source_offset` must first be converted
+from generated-script UTF-8 bytes to line/UTF-16 column. The event line/column workflow below does
+not apply directly to a byte offset.
+
 ## Description
 
 During trace analysis, some trace events may carry `lineNumber` and `columnNumber` in their arguments. This guide helps you map these positions back to the original source code.
@@ -28,7 +39,11 @@ Typical sourcemap examples:
 - `output/{page_name}/intermediate/app-service.js.map`
 - `output/{page_name}/intermediate/lepus.js.map`
 
-**If the sourcemap is missing, remind the user to rebuild the project with sourcemap generation enabled.**
+If the sourcemap is missing, explain that original-source mapping is unavailable. Explicit JS-only
+input can still supply generated-code evidence; do not force a rebuild or use an unrelated map.
+If the user wants original mapping, accept a matching map/artifact locator. Rebuild only when requested
+or when preparing a source-only project under frontend-sources, never as an automatic replacement for
+explicitly supplied artifacts.
 
 If the event belongs to MainThread or LynxEngine, also locate `debug-info.json`.
 
@@ -43,7 +58,7 @@ Apply this guide when:
 - A trace event argument contains `lineNumber` and `columnNumber`
 
 Do not apply this guide when:
-- The trace event does not contain `lineNumber` and `columnNumber`
+- The trace event does not contain `lineNumber` and `columnNumber` (for snapshot `source_offset`, use [frontend-sources](./frontend-sources.md))
 - The position already points to original source files
 
 ## Using the Remapping Script
@@ -81,6 +96,8 @@ Example output:
 ## Requirements
 
 - Always confirm the sourcemap corresponds to the generated JavaScript file in the trace event
+- Rebase map paths into the user-specified original source project, validating uniqueness and
+  `sourcesContent`; a downloaded map's directory or build-machine path is not the original source root.
 - Always preserve the original trace event position in the report for cross-checking
 - For MainThread or LynxEngine events, always provide the `--debug-info` parameter
 - If remapping fails, clearly explain whether `debug-info.json` is missing, the sourcemap is missing, a file is malformed, or there is simply no matching entry

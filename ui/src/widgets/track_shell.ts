@@ -24,6 +24,7 @@ import {Chip} from './chip';
 import {HTMLAttrs, Intent} from './common';
 import {Popup} from './popup';
 import {Stack} from './stack';
+import {Tooltip} from './tooltip';
 
 /**
  * This component defines the look and style of the DOM parts of a track (mainly
@@ -52,6 +53,9 @@ import {Stack} from './stack';
 export interface TrackShellAttrs extends HTMLAttrs {
   // The title of this track.
   readonly title: string;
+
+  // Optional tooltip content for the track title.
+  readonly titleTooltip?: m.Children;
 
   // Optional subtitle to display underneath the track name.
   readonly subtitle?: string;
@@ -109,10 +113,14 @@ export interface TrackShellAttrs extends HTMLAttrs {
   // Called when the track is expanded or collapsed (when the node is clicked).
   onCollapsedChanged?(collapsed: boolean): void;
 
+  // Optional action for clicks on the track name area.
+  onTrackShellClick?(): void;
+
   // Mouse events within the track content element.
   onTrackContentMouseMove?(pos: Point2D, contentSize: Bounds2D): void;
   onTrackContentMouseOut?(): void;
   onTrackContentClick?(pos: Point2D, contentSize: Bounds2D): boolean;
+  onTrackContentDoubleClick?(pos: Point2D, contentSize: Bounds2D): boolean;
 
   // If reorderable, these functions will be called when track shells are
   // dragged and dropped.
@@ -221,11 +229,16 @@ export class TrackShell implements m.ClassComponent<TrackShellAttrs> {
       `.pf-track__shell`,
       {
         className: classNames(
-          collapsible && 'pf-track__shell--clickable',
+          (collapsible || attrs.onTrackShellClick !== undefined) &&
+            'pf-track__shell--clickable',
           highlight && 'pf-track__shell--highlight',
           lite && 'pf-track__shell--lite',
         ),
         onclick: () => {
+          if (attrs.onTrackShellClick !== undefined) {
+            attrs.onTrackShellClick();
+            return;
+          }
           collapsible && attrs.onCollapsedChanged?.(!collapsed);
           if (!collapsed) {
             this.scrollIntoView = true;
@@ -329,7 +342,15 @@ export class TrackShell implements m.ClassComponent<TrackShellAttrs> {
                   icon: collapsed ? Icons.ExpandDown : Icons.ExpandUp,
                 })
               : m('.pf-track__title-spacer'),
-            m(TrackTitle, {title: attrs.title}),
+            attrs.titleTooltip === undefined
+              ? m(TrackTitle, {title: attrs.title})
+              : m(
+                  Tooltip,
+                  {
+                    trigger: m('.pf-track__title', attrs.title),
+                  },
+                  attrs.titleTooltip,
+                ),
             chips &&
               m(
                 Stack,
@@ -365,6 +386,7 @@ export class TrackShell implements m.ClassComponent<TrackShellAttrs> {
       onTrackContentMouseMove,
       onTrackContentMouseOut,
       onTrackContentClick,
+      onTrackContentDoubleClick,
       error,
     } = attrs;
 
@@ -411,6 +433,17 @@ export class TrackShell implements m.ClassComponent<TrackShellAttrs> {
             )
           ) {
             e.stopPropagation();
+          }
+        },
+        ondblclick: (event: MouseEvent) => {
+          if (
+            onTrackContentDoubleClick?.(
+              currentTargetOffset(event),
+              getTargetContainerSize(event),
+            )
+          ) {
+            event.stopPropagation();
+            event.preventDefault();
           }
         },
       },

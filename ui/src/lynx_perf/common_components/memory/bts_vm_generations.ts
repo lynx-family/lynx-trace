@@ -12,22 +12,32 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import {Args, ArgsDict, getArgs} from '../../../components/sql_utils/args';
-import {asArgSetId} from '../../../components/sql_utils/core_types';
 import {Engine} from '../../../trace_processor/engine';
-import {LONG, NUM, STR} from '../../../trace_processor/query_result';
+import {
+  LONG,
+  NUM,
+  NUM_NULL,
+  STR,
+  STR_NULL,
+} from '../../../trace_processor/query_result';
 
 export const PAGE_USES_BTS_VM = 'page_uses_bts_vm';
 export const BTS_RUNTIME_DESTROY = 'BTSRuntime::Destroy';
 export const DESTROY_VM_INSTANCE = 'destroy_vm_instance';
+export const VM_GC = 'VM_GC';
 
 export interface BtsVmLifecycleEvent {
   sliceId: number;
   ts: bigint;
-  eventName: typeof PAGE_USES_BTS_VM | typeof DESTROY_VM_INSTANCE;
-  ptr: string;
+  eventName:
+    | typeof PAGE_USES_BTS_VM
+    | typeof BTS_RUNTIME_DESTROY
+    | typeof DESTROY_VM_INSTANCE
+    | typeof VM_GC;
+  ptr?: string;
   groupId?: string;
   instanceId?: number;
+  slot?: number;
   desc?: string;
   url?: string;
 }
@@ -35,8 +45,10 @@ export interface BtsVmLifecycleEvent {
 export interface BtsVmUse {
   instanceId: number;
   ts: bigint;
+  slot?: number;
   desc: string;
   url?: string;
+  destroyTs?: bigint;
 }
 
 export interface BtsVmInstance {
@@ -48,6 +60,7 @@ export interface BtsVmInstance {
   createTs: bigint;
   destroyTs?: bigint;
   uses: BtsVmUse[];
+  gcTimestamps: bigint[];
 }
 
 export function formatBtsVmInstanceName(
@@ -63,6 +76,7 @@ export function buildBtsVmInstances(
   const instances: BtsVmInstance[] = [];
   const activeByPtr = new Map<string, BtsVmInstance>();
   const activeByName = new Map<string, BtsVmInstance>();
+  const activeUseByInstanceId = new Map<number, BtsVmUse>();
   const nextGeneration = new Map<string, number>();
   const events = [...lifecycleEvents].sort((a, b) => {
     if (a.ts === b.ts) {
@@ -72,7 +86,29 @@ export function buildBtsVmInstances(
   });
 
   for (const event of events) {
+    if (event.eventName === BTS_RUNTIME_DESTROY) {
+      if (event.instanceId === undefined) {
+        continue;
+      }
+      const use = activeUseByInstanceId.get(event.instanceId);
+      if (use !== undefined && event.ts >= use.ts) {
+        use.destroyTs = event.ts;
+        activeUseByInstanceId.delete(event.instanceId);
+      }
+      continue;
+    }
+
+    if (event.eventName === VM_GC) {
+      if (event.ptr !== undefined) {
+        activeByPtr.get(event.ptr)?.gcTimestamps.push(event.ts);
+      }
+      continue;
+    }
+
     if (event.eventName === DESTROY_VM_INSTANCE) {
+      if (event.ptr === undefined) {
+        continue;
+      }
       const active = activeByPtr.get(event.ptr);
       if (active === undefined) {
         continue;
@@ -86,10 +122,19 @@ export function buildBtsVmInstances(
       if (activeByName.get(active.name) === active) {
         activeByName.delete(active.name);
       }
+      for (const use of active.uses) {
+        if (activeUseByInstanceId.get(use.instanceId) === use) {
+          activeUseByInstanceId.delete(use.instanceId);
+        }
+      }
       continue;
     }
 
-    if (event.instanceId === undefined || event.groupId === undefined) {
+    if (
+      event.ptr === undefined ||
+      event.instanceId === undefined ||
+      event.groupId === undefined
+    ) {
       continue;
     }
 
@@ -105,6 +150,7 @@ export function buildBtsVmInstances(
         desc: event.desc ?? '',
         createTs: event.ts,
         uses: [],
+        gcTimestamps: [],
       };
       instances.push(instance);
       activeByName.set(name, instance);
@@ -122,15 +168,22 @@ export function buildBtsVmInstances(
       (use) => use.instanceId === event.instanceId,
     );
     if (currentUse === undefined) {
-      instance.uses.push({
+      const use = {
         instanceId: event.instanceId,
         ts: event.ts,
+        slot: event.slot,
         desc: event.desc ?? '',
         url: event.url,
-      });
+      };
+      instance.uses.push(use);
+      activeUseByInstanceId.set(event.instanceId, use);
     } else {
+      currentUse.slot ??= event.slot;
       currentUse.desc = currentUse.desc || event.desc || '';
       currentUse.url = currentUse.url || event.url;
+      if (currentUse.destroyTs === undefined) {
+        activeUseByInstanceId.set(event.instanceId, currentUse);
+      }
     }
   }
 
@@ -191,82 +244,103 @@ export async function loadBtsVmInstances(
 ): Promise<BtsVmInstance[]> {
   const result = await engine.query(`
     SELECT
-      id,
-      ts,
-      name,
-      arg_set_id AS argSetId
+      slice.id,
+      CASE
+        WHEN slice.name IN ('${BTS_RUNTIME_DESTROY}', '${VM_GC}')
+          THEN slice.ts + slice.dur
+        ELSE slice.ts
+      END AS eventTs,
+      slice.name,
+      (
+        SELECT arg.display_value
+        FROM args arg
+        WHERE arg.arg_set_id = slice.arg_set_id
+          AND arg.flat_key IN ('ptr', 'debug.ptr')
+        LIMIT 1
+      ) AS ptr,
+      (
+        SELECT arg.display_value
+        FROM args arg
+        WHERE arg.arg_set_id = slice.arg_set_id
+          AND arg.flat_key IN ('group_id', 'debug.group_id')
+        LIMIT 1
+      ) AS groupId,
+      CAST((
+        SELECT arg.display_value
+        FROM args arg
+        WHERE arg.arg_set_id = slice.arg_set_id
+          AND arg.flat_key IN ('instance_id', 'debug.instance_id')
+        LIMIT 1
+      ) AS INT) AS instanceId,
+      CAST((
+        SELECT arg.display_value
+        FROM args arg
+        WHERE arg.arg_set_id = slice.arg_set_id
+          AND arg.flat_key IN ('slot', 'debug.slot')
+        LIMIT 1
+      ) AS INT) AS slot,
+      (
+        SELECT arg.display_value
+        FROM args arg
+        WHERE arg.arg_set_id = slice.arg_set_id
+          AND arg.flat_key IN ('desc', 'debug.desc')
+        LIMIT 1
+      ) AS desc,
+      (
+        SELECT arg.display_value
+        FROM args arg
+        WHERE arg.arg_set_id = slice.arg_set_id
+          AND arg.flat_key IN ('url', 'debug.url')
+        LIMIT 1
+      ) AS url
     FROM slice
-    WHERE name IN ('${PAGE_USES_BTS_VM}', '${DESTROY_VM_INSTANCE}')
-      AND arg_set_id IS NOT NULL
-    ORDER BY ts ASC, id ASC
+    WHERE name IN (
+      '${PAGE_USES_BTS_VM}',
+      '${BTS_RUNTIME_DESTROY}',
+      '${DESTROY_VM_INSTANCE}',
+      '${VM_GC}'
+    )
+      AND NOT (
+        name IN ('${BTS_RUNTIME_DESTROY}', '${VM_GC}')
+        AND dur < 0
+      )
+    ORDER BY eventTs ASC, id ASC
   `);
   const events: BtsVmLifecycleEvent[] = [];
   for (
     const it = result.iter({
       id: NUM,
-      ts: LONG,
+      eventTs: LONG,
       name: STR,
-      argSetId: NUM,
+      ptr: STR_NULL,
+      groupId: STR_NULL,
+      instanceId: NUM_NULL,
+      slot: NUM_NULL,
+      desc: STR_NULL,
+      url: STR_NULL,
     });
     it.valid();
     it.next()
   ) {
-    const args = await getArgs(engine, asArgSetId(it.argSetId));
-    const ptr = getArgDisplayValue(args, 'ptr');
-    if (ptr === undefined) {
-      continue;
-    }
-
     const eventName =
-      it.name === PAGE_USES_BTS_VM ? PAGE_USES_BTS_VM : DESTROY_VM_INSTANCE;
+      it.name === PAGE_USES_BTS_VM
+        ? PAGE_USES_BTS_VM
+        : it.name === BTS_RUNTIME_DESTROY
+          ? BTS_RUNTIME_DESTROY
+          : it.name === VM_GC
+            ? VM_GC
+            : DESTROY_VM_INSTANCE;
     events.push({
       sliceId: it.id,
-      ts: it.ts,
+      ts: it.eventTs,
       eventName,
-      ptr,
-      groupId: getArgDisplayValue(args, 'group_id'),
-      instanceId: getArgNumber(args, 'instance_id'),
-      desc: getArgDisplayValue(args, 'desc'),
-      url: getArgDisplayValue(args, 'url'),
+      ptr: it.ptr ?? undefined,
+      groupId: it.groupId ?? undefined,
+      instanceId: it.instanceId ?? undefined,
+      slot: it.slot ?? undefined,
+      desc: it.desc ?? undefined,
+      url: it.url ?? undefined,
     });
   }
   return buildBtsVmInstances(events);
-}
-
-function getArgNumber(args: ArgsDict, key: string): number | undefined {
-  const value = getArgDisplayValue(args, key);
-  if (value === undefined) {
-    return undefined;
-  }
-  const numberValue = Number(value);
-  return Number.isFinite(numberValue) ? numberValue : undefined;
-}
-
-function getArgDisplayValue(args: ArgsDict, key: string): string | undefined {
-  const value =
-    getValueByPath(args, key) ?? getValueByPath(args, `debug.${key}`);
-  if (value === undefined) {
-    return undefined;
-  }
-  if (
-    value === null ||
-    typeof value === 'string' ||
-    typeof value === 'number' ||
-    typeof value === 'boolean' ||
-    typeof value === 'bigint'
-  ) {
-    return String(value);
-  }
-  return JSON.stringify(value);
-}
-
-function getValueByPath(args: ArgsDict, path: string): Args | undefined {
-  let value: Args | undefined = args;
-  for (const key of path.split('.')) {
-    if (value === null || typeof value !== 'object' || Array.isArray(value)) {
-      return undefined;
-    }
-    value = value[key];
-  }
-  return value;
 }
