@@ -18,13 +18,15 @@ jobs:
   build-ui:
     name: Build Perfetto UI
     runs-on: ubuntu-latest
-    
+    permissions:
+      contents: write
+
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       with:
         submodules: recursive
-    
+
     - name: Install pnpm
       run: npm install -g pnpm
 
@@ -40,17 +42,23 @@ jobs:
       run: |
         ui/build --out out/dist
 
+    - name: Set build metadata
+      if: ${{ inputs.upload_artifacts }}
+      id: build-info
+      run: echo "build_date=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
+
     - name: Package UI artifacts
-      if: ${{ github.event.inputs.upload_artifacts }}
+      if: ${{ inputs.upload_artifacts }}
       run: |
         cd out/dist/ui/dist
         tar -czf perfetto-ui-${{ github.sha }}.tar.gz ./*
 
     - name: Create Release
-      if: ${{ github.event.inputs.upload_artifacts }}
-      uses: softprops/action-gh-release@v1
+      if: ${{ inputs.upload_artifacts }}
+      uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
       with:
         tag_name: ${{ github.event.inputs.tag_name }}
+        target_commitish: ${{ github.sha }}
         name: Perfetto UI ${{ github.event.inputs.tag_name }}
         body: |
           Perfetto UI build
